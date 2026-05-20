@@ -1,0 +1,242 @@
+\documentclass[12pt,oneside]{article}
+
+% =========================================================
+% Packages
+% =========================================================
+
+\usepackage[margin=1in]{geometry}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+\usepackage{lmodern}
+\usepackage{microtype}
+
+% Math
+\usepackage{amsmath,amssymb,amsfonts,amsthm,mathtools,bm}
+
+% Graphics
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{subcaption}
+
+% Tables
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+
+% Lists
+\usepackage{enumitem}
+
+% Colors + hyperlinks
+\usepackage{xcolor}
+\usepackage[
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+]{hyperref}
+
+% Code listings
+\usepackage{listings}
+
+% Bibliography
+\usepackage[numbers]{natbib}
+
+% Page formatting
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.75em}
+
+% =========================================================
+% Custom Commands
+% =========================================================
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\mathrm{Var}}
+\newcommand{\Cov}{\mathrm{Cov}}
+
+\newcommand{\given}{\,|\,}
+
+% =========================================================
+% Title
+% =========================================================
+
+\title{
+    Diffusion-Based Inpainting for Retinal OCT Images
+}
+
+\author{
+    Jonathan Ma
+}
+
+\date{\today}
+
+% =========================================================
+% Document
+% =========================================================
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+
+\newpage
+
+% =========================================================
+\section{Introduction}
+% =========================================================
+
+\subsection{Motivation}
+
+
+
+\subsection{Project Goals}
+
+
+
+\subsection{Research Questions}
+
+
+
+% =========================================================
+\section{Dataset}
+% =========================================================
+
+\subsection{Retinal OCT Dataset}
+
+
+
+\subsection{Exploratory Data Analysis}
+
+
+
+% =========================================================
+\section{Image Preprocessing}
+% =========================================================
+
+\subsection{Normalization}
+
+
+
+\subsection{Image Resizing}
+
+
+
+\subsection{Data Augmentation}
+
+
+
+% =========================================================
+\section{Mask Generation}
+% =========================================================
+
+\subsection{Problem Formulation}
+
+
+
+\subsection{Mask Types}
+
+
+
+% =========================================================
+\section{Classical Inpainting Methods}
+% =========================================================
+
+\subsection{PDE-Based Diffusion}
+
+
+
+\subsection{Baseline Methods}
+
+
+
+% =========================================================
+\section{Diffusion Model}
+% =========================================================
+
+\subsection{Forward Diffusion Process}
+
+
+
+\subsection{Conditional Inpainting Framework}
+
+
+
+\subsection{Model Architecture}
+
+
+
+% =========================================================
+\section{Training Procedure}
+% =========================================================
+
+\subsection{Loss Function}
+
+
+
+\subsection{Optimization}
+
+
+
+% =========================================================
+\section{Evaluation}
+% =========================================================
+
+\subsection{Reconstruction Metrics}
+
+
+
+\subsection{Mask Sensitivity Experiments}
+
+
+
+% =========================================================
+\section{Uncertainty Analysis}
+% =========================================================
+
+\subsection{Multiple Reconstruction Sampling}
+
+
+
+\subsection{Uncertainty Maps}
+
+
+
+% =========================================================
+\section{Results}
+% =========================================================
+
+\subsection{Qualitative Results}
+
+
+
+\subsection{Quantitative Results}
+
+
+
+% =========================================================
+\section{Discussion}
+% =========================================================
+
+
+
+% =========================================================
+\section{Future Work}
+% =========================================================
+
+
+
+% =========================================================
+\section{Conclusion}
+% =========================================================
+
+
+
+% =========================================================
+\bibliographystyle{plainnat}
+\bibliography{references}
+% =========================================================
+
+\end{document}
