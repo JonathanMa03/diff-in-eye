@@ -141,3 +141,5 @@ latexmkrc
 
 # Keep empty folders
 !.gitkeep
+
+.venv
