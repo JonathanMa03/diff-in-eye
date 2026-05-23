@@ -143,3 +143,25 @@ latexmkrc
 !.gitkeep
 
 .venv
+
+# Metrics outputs
+results/metrics/*.csv
+
+# Optional: all generated metrics artifacts
+results/metrics/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# PyTorch checkpoints (optional if too large)
+# results/checkpoints/**/*.pt
