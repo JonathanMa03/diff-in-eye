@@ -1,76 +1,131 @@
 # =========================================================
+# Python Version
+# =========================================================
+# Recommended:
+# Python >= 3.10,<3.14
+#
+# NOTE:
+# PyTorch and several scientific packages may not yet fully
+# support Python 3.14 on all systems.
+# Python 3.11 is recommended for maximum compatibility.
+# =========================================================
+
+# =========================================================
 # Core Scientific Computing
 # =========================================================
 
-numpy
-scipy
-pandas
+numpy>=1.26
+scipy>=1.11
+pandas>=2.2
 
 # =========================================================
 # Visualization
 # =========================================================
 
-matplotlib
-seaborn
+matplotlib>=3.8
+seaborn>=0.13
 
 # =========================================================
 # Image Processing
 # =========================================================
 
-opencv-python
-scikit-image
-Pillow
+opencv-python>=4.10
+scikit-image>=0.24
+Pillow>=10.4
 
 # =========================================================
 # Deep Learning
 # =========================================================
 
-torch
-torchvision
-torchaudio
+torch>=2.2
+torchvision>=0.17
+torchaudio>=2.2
 
 # =========================================================
 # Diffusion / Generative Modeling
 # =========================================================
 
-diffusers
-accelerate
+diffusers>=0.30
+accelerate>=0.34
 
 # =========================================================
 # Medical Imaging
 # =========================================================
 
-monai
+monai>=1.3
 
 # =========================================================
 # Notebook Environment
 # =========================================================
 
-jupyter
-notebook
-ipykernel
+jupyter>=1.0
+notebook>=7.2
+ipykernel>=6.29
 
 # =========================================================
 # Utilities
 # =========================================================
 
-tqdm
-PyYAML
+tqdm>=4.66
+PyYAML>=6.0
 
 # =========================================================
 # Experiment Tracking / Logging
 # =========================================================
 
-tensorboard
+tensorboard>=2.17
 
 # =========================================================
 # Optional Quality-of-Life Packages
 # =========================================================
 
-einops
+einops>=0.8
 
 # =========================================================
 # LaTeX / Export Utilities
 # =========================================================
 
-nbconvert
+nbconvert>=7.16
+
+# =========================================================
+# Optional Development Utilities
+# =========================================================
+
+pytest>=8.3
+black>=24.8
+ruff>=0.6
+
+# =========================================================
+# Installation Notes
+# =========================================================
+#
+# Create environment:
+#
+#   python -m venv .venv
+#
+# Activate environment:
+#
+#   source .venv/bin/activate        # macOS/Linux
+#   .venv\Scripts\activate           # Windows
+#
+# Upgrade pip:
+#
+#   python -m pip install --upgrade pip
+#
+# Install dependencies:
+#
+#   pip install -r requirements.txt
+#
+# Install PyTorch separately if needed:
+# https://pytorch.org/get-started/locally/
+#
+# Example (CPU):
+#
+#   pip install torch torchvision torchaudio
+#
+# Example (CUDA):
+#
+#   pip install torch torchvision torchaudio \
+#       --index-url https://download.pytorch.org/whl/cu121
+#
+# =========================================================

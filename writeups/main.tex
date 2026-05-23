@@ -63,7 +63,8 @@
 % =========================================================
 
 \title{
-    Diffusion-Based Inpainting for Retinal OCT Images
+    A Review of Image Analysis and Inpainting Techniques,\\
+    and Motivation for DiffIndEye
 }
 
 \author{
@@ -88,150 +89,2483 @@
 \section{Introduction}
 % =========================================================
 
-\subsection{Motivation}
+Medical image analysis studies how quantitative methods can be used to represent, process, and interpret images arising from biological and clinical systems. In retinal optical coherence tomography (OCT), the image is not merely a visual object but a structured measurement of tissue reflectivity. This makes OCT reconstruction a mathematical imaging problem: one must preserve geometry, intensity, and anatomical plausibility while dealing with noise, artifacts, and missing information.
 
+The goal of this report is to review the image analysis ideas underlying retinal OCT inpainting and to motivate DiffIndEye, an exploratory framework for diffusion-based inpainting of retinal OCT images. The project begins with classical reconstruction methods, including zero-fill, Gaussian smoothing, PDE-style diffusion, and Telea inpainting, before moving to conditional denoising diffusion models. The central question is whether a learned generative model can recover plausible retinal structure from synthetically corrupted OCT scans, and how this compares to simpler deterministic baselines.
 
+\subsection{Medical Image Analysis and Computer Vision}
 
-\subsection{Project Goals}
+A grayscale medical image can be represented as a function $I:\Omega \to \R$, where $\Omega \subset \R^2$ is the spatial image domain and $I(x,y)$ is the measured intensity at location $(x,y)$. After discretization, the image is stored as a matrix $I \in \R^{m \times n}$. Computer vision methods then attempt to extract structure from this matrix, such as edges, regions, textures, shapes, or higher-level semantic information.
 
+Medical image analysis differs from ordinary computer vision because the structures being analyzed are constrained by anatomy and imaging physics. Small changes in intensity or geometry may correspond to clinically meaningful tissue differences. Therefore, image processing methods must balance numerical accuracy with structural plausibility.
 
+Many medical imaging problems can be written as inverse problems. If $X$ denotes the unknown clean image and $Y$ denotes the observed image, then a general degradation model is
+\[
+Y = \mathcal{A}(X) + \varepsilon,
+\]
+where $\mathcal{A}$ is an acquisition or corruption operator and $\varepsilon$ represents noise. Denoising, deblurring, super-resolution, segmentation, and inpainting can all be viewed as attempts to recover or infer information about $X$ from $Y$.
+
+\subsection{Retinal Imaging and Optical Coherence Tomography}
+
+Optical coherence tomography is a non-invasive imaging modality that produces cross-sectional views of retinal tissue. An OCT B-scan visualizes layered retinal anatomy by measuring reflected light intensity at different depths. In the resulting image, bright regions often correspond to highly reflective tissue boundaries, while dark regions may correspond to fluid, attenuation, or low-reflectivity tissue.
+
+Retinal OCT images are highly structured. Unlike natural images, they usually contain strong horizontal layer organization, smooth anatomical continuity, and disease-specific distortions. Conditions such as age-related macular degeneration, diabetic macular edema, choroidal neovascularization, and drusen alter retinal shape and reflectivity. This makes OCT imaging useful for diagnosis, but also challenging for reconstruction because missing or corrupted regions may contain clinically important structure.
+
+\subsection{Image Corruption and Missing Information Problems}
+
+Image corruption occurs when the observed image fails to fully capture the underlying clean structure. In OCT imaging, this can arise from speckle noise, motion artifacts, signal attenuation, shadowing, poor fixation, or acquisition dropout. For inpainting, the relevant case is partial observation.
+
+Let $X \in \R^{H \times W}$ denote a clean image and let $M \in \{0,1\}^{H \times W}$ denote a binary mask. The observed corrupted image is
+\[
+Y = M \odot X,
+\]
+where $\odot$ denotes elementwise multiplication. Pixels with $M_{ij}=1$ are observed, while pixels with $M_{ij}=0$ are missing. The inpainting task is to estimate the missing values using the observed image $Y$ and mask $M$.
+
+This problem is ill-posed because many different images may agree with the observed pixels. A deterministic method returns one reconstruction $\hat{X}$, while a probabilistic method attempts to model a conditional distribution $p(X \given Y,M)$ over plausible reconstructions.
+
+\subsection{Motivation for Retinal OCT Inpainting}
+
+Retinal OCT inpainting is motivated by the need to recover or approximate missing anatomical structure in corrupted scans. Because OCT images contain layered retinal tissue, inpainting is not just a pixel-filling problem. A successful reconstruction should preserve layer continuity, local reflectivity patterns, and global retinal shape.
+
+Classical inpainting methods can be effective when missing regions are small or when local continuity is sufficient. However, structured missing regions may require more than local interpolation. In retinal OCT, a missing horizontal band can remove part of several retinal layers simultaneously, forcing the reconstruction method to infer anatomy from broader context.
+
+\subsection{Motivation for DiffIndEye}
+
+DiffIndEye was developed to study retinal OCT inpainting using both classical image processing baselines and diffusion-based generative modeling. The project asks whether conditional diffusion models can learn retinal structure well enough to reconstruct synthetically masked OCT regions.
+
+The motivation is twofold. First, diffusion models provide a probabilistic framework for image reconstruction, where multiple plausible completions can in principle be sampled from $p(X \given Y,M)$. Second, comparing diffusion models against classical methods reveals whether the added complexity of generative modeling is justified for this task.
+
+The project also emphasizes reproducibility. The pipeline separates preprocessing, masking, baselines, diffusion schedules, model training, sampling, and evaluation into modular components so that future diffusion architectures can be tested systematically.
+
+\subsection{Project Objectives}
+
+The objectives of DiffIndEye are:
+\[
+\text{preprocess OCT images} \rightarrow
+\text{apply controlled masks} \rightarrow
+\text{compare reconstruction methods}.
+\]
+
+More specifically, the project aims to construct a reproducible OCT inpainting framework, benchmark classical inpainting methods, implement a conditional denoising diffusion model, evaluate reconstruction quality under synthetic stripe corruption, and identify limitations of the initial diffusion architecture.
 
 \subsection{Research Questions}
 
+The project is guided by the following questions. Can a diffusion model learn meaningful retinal OCT structure from masked images? How does diffusion-based reconstruction compare with classical baselines such as Gaussian smoothing, PDE diffusion, and Telea inpainting? Why might a diffusion model train successfully but still reconstruct poorly? What architectural changes, such as a U-Net backbone, are likely necessary for better OCT inpainting? Finally, can this framework be extended toward uncertainty-aware reconstruction and more realistic retinal artifact correction?
+
+% =========================================================
+\section{Background Review}
+% =========================================================
+
+\subsection{Foundations of Image Analysis}
+
+Image analysis studies how mathematical methods can be used to represent, process, and interpret visual information. A grayscale image is commonly modeled as a function
+\[
+I:\Omega \to \R,
+\]
+where $\Omega \subset \R^2$ denotes the image domain and $I(x,y)$ is the image intensity at spatial coordinate $(x,y)$. After discretization, the image becomes a matrix
+\[
+I \in \R^{m \times n}.
+\]
+
+Many image analysis tasks rely on extracting structure from this matrix representation. Edges correspond to regions of rapid intensity variation and are often characterized using image gradients:
+\[
+\nabla I =
+\left(
+\frac{\partial I}{\partial x},
+\frac{\partial I}{\partial y}
+\right).
+\]
+The gradient magnitude
+\[
+\|\nabla I\|
+=
+\sqrt{
+\left(
+\frac{\partial I}{\partial x}
+\right)^2
++
+\left(
+\frac{\partial I}{\partial y}
+\right)^2
+}
+\]
+is frequently used to identify boundaries and transitions in anatomical structure.
+
+Image analysis also studies spatial correlation and texture. Neighboring pixels in medical images are usually highly dependent, meaning:
+\[
+\Cov(I_{ij}, I_{kl}) > 0
+\]
+for nearby spatial locations. This local structure motivates convolutional methods, diffusion processes, and neighborhood-based reconstruction techniques.
+
+\subsection{Classical Image Processing Approaches}
+
+Classical image processing methods reconstruct images using local intensity relationships rather than learned statistical models. These approaches are often computationally efficient and mathematically interpretable.
+
+One of the simplest reconstruction ideas is interpolation. If neighboring pixel values are known, missing pixels can be estimated as weighted averages:
+\[
+\hat{I}(x,y)
+=
+\sum_k w_k I_k.
+\]
+Gaussian smoothing is another classical operation. A Gaussian kernel
+\[
+G_\sigma(x,y)
+=
+\frac{1}{2\pi\sigma^2}
+\exp
+\left(
+-\frac{x^2+y^2}{2\sigma^2}
+\right)
+\]
+is convolved with the image to reduce noise and smooth discontinuities.
+
+These methods work well when missing regions are small and local continuity assumptions hold. However, they often oversmooth boundaries and fail to reconstruct large missing structures. In retinal OCT imaging, excessive smoothing can destroy thin retinal layers and clinically important reflectivity transitions.
+
+\subsection{Partial Differential Equation Methods}
+
+Partial differential equation methods interpret image reconstruction as a continuous diffusion process. The simplest PDE model is isotropic diffusion:
+\[
+\frac{\partial u}{\partial t}
+=
+\Delta u,
+\]
+where $\Delta$ is the Laplacian operator. This equation smooths intensity differences over time and can be interpreted as heat flow across the image domain.
+
+Anisotropic diffusion modifies the diffusion strength using local image gradients:
+\[
+\frac{\partial u}{\partial t}
+=
+\nabla \cdot
+\left(
+c(\|\nabla u\|)\nabla u
+\right),
+\]
+where $c(\cdot)$ controls diffusion strength. Regions with large gradients experience less smoothing, which helps preserve edges.
+
+PDE methods are attractive because they are mathematically grounded and preserve local continuity better than naive smoothing. However, they remain fundamentally local methods. Large missing regions often require global structural inference, which PDE diffusion alone cannot provide.
+
+\subsection{Patch-Based and Exemplar Methods}
+
+Patch-based inpainting reconstructs missing regions by copying similar patches from observed regions of the image. Instead of interpolating locally, these methods search for image regions with compatible texture and structure.
+
+Let $P_t$ denote a target patch centered in a missing region and let $P_s$ denote a candidate source patch elsewhere in the image. Reconstruction seeks:
+\[
+P_s^\ast
+=
+\arg\min_{P_s}
+d(P_t,P_s),
+\]
+where $d(\cdot,\cdot)$ is a similarity measure.
+
+Patch-based methods can preserve texture and repetitive structure effectively. However, they assume that suitable replacement patches already exist within the image. In retinal OCT scans, pathology and anatomical uniqueness may violate this assumption. Patch copying can also introduce discontinuities or unrealistic anatomical repetition.
+
+\subsection{Deep Learning for Image Reconstruction}
+
+Deep learning approaches learn image reconstruction directly from data. Convolutional neural networks process images using learned spatial filters:
+\[
+h_{ij}^{(k)}
+=
+\sigma
+\left(
+\sum_{u,v}
+W_{uv}^{(k)}
+x_{i+u,j+v}
++b^{(k)}
+\right),
+\]
+where $W$ denotes convolution kernels and $\sigma$ is a nonlinear activation function.
+
+Encoder--decoder architectures compress images into latent representations before reconstructing them. U-Net architectures extend this idea using skip connections that preserve high-resolution spatial detail.
+
+Deep learning methods can model highly nonlinear image structure and often outperform classical interpolation methods. However, deterministic reconstruction models still produce only one reconstruction estimate and may hallucinate unrealistic anatomy. Performance also depends strongly on architecture design and training stability.
+
+\subsection{Diffusion Models in Computer Vision}
+
+Diffusion probabilistic models generate images through iterative denoising. A forward process gradually corrupts an image with Gaussian noise:
+\[
+q(x_t \given x_{t-1})
+=
+\mathcal{N}
+\left(
+\sqrt{1-\beta_t}x_{t-1},
+\beta_t I
+\right),
+\]
+where $\beta_t$ controls the variance schedule.
+
+After many diffusion steps, the image approaches Gaussian noise. The model then learns a reverse process that reconstructs the image:
+\[
+p_\theta(x_{t-1}\given x_t).
+\]
+
+A common formulation predicts the added noise directly:
+\[
+\mathcal{L}
+=
+\E
+\left[
+\|
+\varepsilon
+-
+\varepsilon_\theta(x_t,t)
+\|^2
+\right].
+\]
+
+Diffusion models have become important in computer vision because they provide stable generative training and strong sample quality. Unlike GANs, they model probability distributions explicitly and support iterative reconstruction.
+
+\subsection{Medical Imaging Applications of Diffusion Models}
+
+Diffusion models have recently been applied to denoising, reconstruction, segmentation, synthesis, and super-resolution tasks in medical imaging. In MRI and CT imaging, diffusion models have been used to reconstruct missing or undersampled measurements. In pathology and microscopy, they have been applied to generative image synthesis and enhancement.
+
+Medical imaging presents unique challenges for generative models because anatomy imposes strong structural constraints. Reconstructions must preserve geometry, tissue boundaries, and clinically meaningful morphology. This makes probabilistic reconstruction especially appealing, since multiple plausible reconstructions may exist for partially observed medical images.
+
+In retinal OCT imaging, diffusion models are attractive because retinal anatomy exhibits strong spatial organization and repeated layer structure. However, preserving fine retinal boundaries and pathological variation remains difficult.
+
+\subsection{Limitations of Existing Inpainting Approaches}
+
+Existing inpainting approaches exhibit several important limitations. Classical interpolation and smoothing methods oversimplify image structure and struggle with large missing regions. PDE methods preserve local continuity but remain fundamentally local. Patch-based methods depend heavily on self-similarity within the image and may fail when pathology is unique.
+
+Deep learning methods improve reconstruction quality but may hallucinate anatomically implausible structure. GAN-based models can generate sharp images but are difficult to train and may collapse to limited image modes.
+
+Diffusion models address some of these issues through probabilistic iterative denoising. However, they are computationally expensive and highly sensitive to architecture design, noise schedules, and conditioning strategies. A model may optimize its denoising objective successfully while still producing poor anatomical reconstruction.
+
+These limitations motivate the study of diffusion-based retinal OCT reconstruction within a controlled experimental framework. DiffIndEye was developed specifically to compare classical deterministic baselines against diffusion-based probabilistic reconstruction while identifying the architectural bottlenecks that currently limit OCT inpainting performance.
 
 
 % =========================================================
-\section{Dataset}
+\section{Dataset and Exploratory Analysis}
 % =========================================================
 
-\subsection{Retinal OCT Dataset}
+\subsection{Retinal OCT Dataset Description}
 
+The DiffIndEye framework uses a publicly available retinal optical coherence tomography dataset consisting of grayscale retinal B-scans acquired from multiple disease categories. OCT imaging produces cross-sectional measurements of retinal tissue reflectivity, allowing layered retinal anatomy to be visualized in high resolution.
 
+The dataset contains approximately
+\[
+18{,}400
+\]
+training images and
+\[
+2{,}800
+\]
+test images. Images were originally collected for retinal disease classification tasks but are repurposed here for reconstruction and inpainting experiments.
 
-\subsection{Exploratory Data Analysis}
+Each image can be represented as
+\[
+I \in \R^{m \times n},
+\]
+where pixel intensity corresponds to retinal reflectivity. Brighter intensities usually indicate highly reflective tissue interfaces, while darker regions correspond to low reflectivity or attenuated signal.
 
+Unlike natural image datasets, retinal OCT scans exhibit highly organized anatomical structure. Most images contain horizontally aligned retinal layers with smooth spatial continuity and disease-dependent structural variation. This strong geometric organization makes OCT imaging particularly suitable for structured reconstruction experiments.
+
+\subsection{Class Structure and Dataset Composition}
+
+The dataset contains four major retinal categories:
+\[
+\{\text{CNV}, \text{DME}, \text{Drusen}, \text{Normal}\}.
+\]
+
+Choroidal neovascularization (CNV) images often exhibit abnormal vascular growth, fluid accumulation, and severe structural distortion. Diabetic macular edema (DME) scans frequently contain cystic fluid regions and retinal swelling. Drusen images contain deposits associated with dry age-related macular degeneration and often exhibit gradual deformation of retinal boundaries. Normal images preserve relatively regular retinal layer organization.
+
+Although the present project does not perform disease classification, the class diversity is important because it increases anatomical variability within the learned image distribution:
+\[
+p_{\mathrm{data}}(x).
+\]
+
+The reconstruction framework therefore learns from both healthy and pathological retinal morphology. This produces a more difficult and realistic reconstruction problem than learning from healthy anatomy alone.
+
+\subsection{Image Characteristics}
+
+Retinal OCT images possess several structural properties that distinguish them from ordinary natural images. Most importantly, retinal scans exhibit strong horizontal anatomical organization. Thin retinal layers extend laterally across the image, creating high spatial correlation and continuous geometric structure.
+
+After preprocessing, each image is resized to
+\[
+128 \times 256,
+\]
+giving tensor representations of the form
+\[
+X \in \R^{1 \times 128 \times 256}.
+\]
+
+Images are grayscale rather than RGB, meaning that anatomical information is encoded primarily through intensity and spatial structure rather than color. This makes OCT reconstruction fundamentally a structural intensity reconstruction problem.
+
+Pathological scans introduce substantial variability into the dataset. Fluid accumulation, reflectivity changes, retinal thickening, and irregular anatomical boundaries all alter local image statistics. Consequently, successful reconstruction methods must preserve both local retinal texture and global anatomical organization.
+
+\subsection{Exploratory Visualization}
+
+Exploratory visualization was performed to understand retinal anatomy, image variability, and reconstruction difficulty before model development.
+
+Random image sampling revealed that retinal OCT images consistently contain:
+\begin{itemize}
+    \item horizontally layered anatomy,
+    \item strong spatial continuity,
+    \item localized pathological deformation,
+    \item and high contrast tissue boundaries.
+\end{itemize}
+
+Visualization across disease categories demonstrated substantial structural heterogeneity. CNV and DME scans frequently contain fluid disruptions and irregular morphology, while normal scans exhibit smoother layer continuity.
+
+Exploratory inspection also motivated the use of horizontal stripe masking. Because retinal layers extend laterally across the image, removing a horizontal band interrupts multiple retinal layers simultaneously, creating a structured and anatomically meaningful reconstruction problem.
+
+Visual inspection of masked images confirmed that stripe corruption removes clinically relevant retinal structure while preserving enough surrounding anatomy to make reconstruction feasible.
+
+\subsection{Intensity and Structural Analysis}
+
+Retinal OCT images exhibit highly structured intensity distributions. Bright regions correspond to reflective retinal interfaces, while darker regions often correspond to fluid or attenuated signal.
+
+The image gradient
+\[
+\nabla I
+=
+\left(
+\frac{\partial I}{\partial x},
+\frac{\partial I}{\partial y}
+\right)
+\]
+is especially informative because retinal layer boundaries produce strong local intensity transitions. Large gradient magnitudes therefore frequently correspond to clinically meaningful anatomical interfaces.
+
+The dataset also exhibits strong spatial correlation:
+\[
+\Cov(I_{ij}, I_{kl}) > 0
+\]
+for nearby spatial coordinates. This local continuity motivates convolutional architectures and PDE-based smoothing methods.
+
+At the same time, retinal OCT images contain both low-frequency and high-frequency structure. Global retinal curvature and large-scale anatomy correspond to low-frequency structure, while thin retinal boundaries and pathological detail correspond to high-frequency information. Successful reconstruction therefore requires preserving multiple spatial scales simultaneously.
+
+\subsection{Observed Imaging Artifacts and Variability}
+
+Several forms of imaging variability and artifact were observed during exploratory analysis.
+
+Speckle noise appears throughout many scans due to coherent interference effects during OCT acquisition. This produces granular local intensity variation that can obscure retinal boundaries.
+
+Motion artifacts occasionally introduce discontinuities or local distortion. Signal attenuation and vascular shadowing may also produce darker vertical regions that partially obscure deeper retinal tissue.
+
+Pathological variation introduces an additional source of complexity. Fluid regions, retinal swelling, drusen deposits, and irregular layer deformation all alter anatomical structure in ways that may complicate reconstruction.
+
+Contrast and brightness also vary substantially across scans due to acquisition conditions and scanner preprocessing. Consequently, intensity normalization and standardized preprocessing become important for stable diffusion training.
+
+These observations motivated the design of a controlled reconstruction framework in which corruption patterns are generated synthetically while preprocessing remains standardized across all experiments.
+
+% =========================================================
+\section{Image Preprocessing Pipeline}
+% =========================================================
+
+\subsection{Preprocessing Objectives}
+
+Image preprocessing was designed to standardize retinal OCT scans before reconstruction experiments and diffusion model training. The dataset contains substantial variability in:
+\begin{itemize}
+    \item image resolution,
+    \item intensity scaling,
+    \item contrast,
+    \item and retinal morphology.
+\end{itemize}
+
+Without preprocessing, diffusion models may incorrectly learn scanner-dependent artifacts or unstable intensity distributions rather than retinal anatomical structure.
+
+The preprocessing pipeline therefore had several objectives:
+\[
+\text{load images}
+\rightarrow
+\text{standardize geometry}
+\rightarrow
+\text{normalize intensity}
+\rightarrow
+\text{construct tensors}
+\rightarrow
+\text{generate masks}.
+\]
+
+The pipeline was also designed to support reproducible experimentation. All preprocessing operations were deterministic and integrated into reusable dataset and training utilities.
+
+\subsection{Image Loading and Grayscale Conversion}
+
+Retinal OCT images were loaded directly from the dataset directory structure using a modular PyTorch-based dataset pipeline. Each image was converted into grayscale format before further processing.
+
+A grayscale image may be represented as
+\[
+I:\Omega \to \R,
+\]
+where $\Omega \subset \R^2$ is the spatial image domain and $I(x,y)$ denotes reflectivity intensity at spatial coordinate $(x,y)$.
+
+Grayscale representation is appropriate for OCT imaging because anatomical information is encoded primarily through:
+\begin{itemize}
+    \item reflectivity,
+    \item boundary structure,
+    \item and spatial continuity,
+\end{itemize}
+rather than color.
+
+After loading, each image is converted into a tensor representation:
+\[
+X \in \R^{1 \times H \times W},
+\]
+where the leading dimension corresponds to the grayscale channel.
+
+\subsection{Image Resizing and Standardization}
+
+Original OCT scans vary in spatial resolution and aspect ratio. To ensure consistent tensor dimensions and stable convolutional processing, all images were resized to:
+\[
+128 \times 256.
+\]
+
+The resizing transformation may be written as
+\[
+\mathcal{T}:
+\R^{m \times n}
+\to
+\R^{128 \times 256}.
+\]
+
+This standardization simplifies:
+\begin{itemize}
+    \item batch processing,
+    \item mask generation,
+    \item diffusion scheduling,
+    \item and checkpoint evaluation.
+\end{itemize}
+
+The selected resolution balances anatomical fidelity against computational feasibility. Larger images preserve more retinal detail but increase training cost substantially, while smaller images risk destroying thin retinal boundaries and pathological structure.
+
+Because retinal OCT images possess strong horizontal organization, preserving approximate aspect ratio was important for maintaining retinal geometry during resizing.
+
+\subsection{Intensity Normalization}
+
+Retinal OCT scans exhibit substantial variation in brightness and contrast due to acquisition settings and pathological differences. To stabilize optimization, image intensities were normalized into the interval
+\[
+[0,1].
+\]
+
+For image $I$, normalization is performed using
+\[
+I_{\mathrm{norm}}
+=
+\frac{
+I-I_{\min}
+}{
+I_{\max}-I_{\min}
+}.
+\]
+
+Normalization improves numerical stability during diffusion training because the forward diffusion process injects Gaussian noise directly into image tensors:
+\[
+x_t
+=
+\sqrt{\bar{\alpha}_t}x_0
++
+\sqrt{1-\bar{\alpha}_t}\varepsilon.
+\]
+
+Without normalization, inconsistent intensity scales would alter the effective signal-to-noise ratio across images and destabilize denoising behavior.
+
+Normalization also ensures consistent evaluation metrics across experiments. Quantities such as mean squared error and PSNR become comparable only when images share a common intensity range.
+
+\subsection{Tensor Preparation for Deep Learning}
+
+After preprocessing, retinal OCT images were converted into tensors compatible with convolutional neural networks and diffusion models.
+
+Each image tensor satisfies
+\[
+X
+\in
+\R^{1 \times 128 \times 256}.
+\]
+
+During training, images are processed in batches:
+\[
+X
+\in
+\R^{B \times 1 \times 128 \times 256},
+\]
+where $B$ denotes batch size.
+
+Synthetic corruption masks are represented as binary tensors:
+\[
+M
+\in
+\{0,1\}^{1 \times 128 \times 256}.
+\]
+
+The masked retinal image is then computed as
+\[
+Y = M \odot X.
+\]
+
+The conditional diffusion model receives:
+\[
+(X_t,Y,M),
+\]
+where:
+\begin{itemize}
+    \item $X_t$ is the noisy diffusion state,
+    \item $Y$ is the masked retinal image,
+    \item and $M$ is the corruption mask.
+\end{itemize}
+
+These tensors are concatenated along the channel dimension before convolutional processing. In the baseline implementation, the model therefore operates on three-channel conditional inputs consisting of:
+\begin{itemize}
+    \item noisy image,
+    \item masked image,
+    \item and binary mask.
+\end{itemize}
+
+\subsection{Pipeline Validation and Sanity Checks}
+
+Several validation procedures were performed to ensure preprocessing consistency and training stability.
+
+Dataset loading checks verified that approximately
+\[
+18{,}400
+\]
+training images and
+\[
+2{,}800
+\]
+test images were correctly discovered and processed.
+
+Tensor shape validation confirmed:
+\[
+\texttt{image}
+\sim
+(B,1,128,256),
+\]
+\[
+\texttt{mask}
+\sim
+(B,1,128,256),
+\]
+and
+\[
+\texttt{masked\_image}
+\sim
+(B,1,128,256).
+\]
+
+Normalization validation ensured that image intensities satisfied
+\[
+X_{ij} \in [0,1].
+\]
+
+Visual inspection was also used to confirm that:
+\begin{itemize}
+    \item retinal anatomy remained visible after preprocessing,
+    \item stripe masks removed meaningful retinal structure,
+    \item and tensor construction behaved consistently across samples.
+\end{itemize}
+
+Diffusion schedule sanity checks verified that:
+\[
+\bar{\alpha}_0 \approx 1
+\]
+and
+\[
+\bar{\alpha}_T \approx 0,
+\]
+ensuring that early diffusion states preserve image signal while late states approach near-complete Gaussian noise.
+
+These validation procedures established a stable and reproducible preprocessing framework for subsequent reconstruction experiments.
+
+% =========================================================
+\section{Synthetic Corruption and Masking}
+% =========================================================
+
+\subsection{Inpainting Problem Formulation}
+
+Let
+\[
+X \in \R^{H \times W}
+\]
+denote a clean retinal OCT image and let
+\[
+M \in \{0,1\}^{H \times W}
+\]
+denote a binary mask indicating observed and missing pixels. The corrupted image is defined as
+\[
+Y = M \odot X,
+\]
+where $\odot$ denotes elementwise multiplication.
+
+Pixels satisfying
+\[
+M_{ij}=1
+\]
+remain visible, while pixels satisfying
+\[
+M_{ij}=0
+\]
+are removed. The inpainting problem consists of estimating a reconstruction
+\[
+\hat{X}
+\approx
+X
+\]
+using only the corrupted image $Y$ and the mask $M$.
+
+From a probabilistic perspective, reconstruction can be interpreted as estimating the conditional distribution
+\[
+p(X \given Y,M).
+\]
+
+This formulation is naturally ill-posed because multiple plausible retinal structures may agree with the observed pixels. Consequently, reconstruction methods must impose assumptions regarding:
+\begin{itemize}
+    \item smoothness,
+    \item anatomical continuity,
+    \item local texture,
+    \item or learned image structure.
+\end{itemize}
+
+In retinal OCT imaging, the reconstruction problem is particularly challenging because corruption may interrupt multiple retinal layers simultaneously.
+
+\subsection{Motivation for Synthetic Masking}
+
+Naturally occurring OCT artifacts are difficult to standardize because they vary substantially across scanners, acquisition conditions, and disease states. As a result, evaluating reconstruction methods directly on real artifacts makes controlled benchmarking difficult.
+
+Synthetic masking addresses this issue by providing:
+\begin{itemize}
+    \item reproducible corruption geometry,
+    \item known ground-truth anatomy,
+    \item and controlled reconstruction difficulty.
+\end{itemize}
+
+Because the original retinal image remains available, reconstruction quality can be evaluated quantitatively using metrics such as:
+\[
+\text{MSE},
+\quad
+\text{MAE},
+\quad
+\text{PSNR}.
+\]
+
+Synthetic corruption also allows direct comparison between:
+\begin{itemize}
+    \item deterministic interpolation methods,
+    \item PDE-based diffusion,
+    \item and generative diffusion models.
+\end{itemize}
+
+The objective is not necessarily to mimic one specific OCT artifact exactly, but rather to create structured missing regions that challenge the model's ability to reconstruct anatomically plausible retinal structure.
+
+\subsection{Horizontal Stripe Corruption Design}
+
+The corruption strategy used in DiffIndEye consists of horizontal stripe masking. This design was motivated by the layered geometry of retinal OCT images, where anatomical structure extends predominantly across the horizontal direction.
+
+A stripe mask removes a contiguous horizontal band:
+\[
+[y_0,y_0+h),
+\]
+where:
+\begin{itemize}
+    \item $y_0$ is the starting row coordinate,
+    \item and $h$ is the stripe height.
+\end{itemize}
+
+The mask is therefore defined by
+\[
+M_{ij}
+=
+\begin{cases}
+0 & y_0 \le i < y_0+h,\\
+1 & \text{otherwise}.
+\end{cases}
+\]
+
+This corruption pattern removes portions of multiple retinal layers simultaneously. Unlike random sparse masking, stripe corruption disrupts long-range anatomical continuity and creates a substantially more difficult reconstruction problem.
+
+The masked image becomes
+\[
+Y = M \odot X,
+\]
+where the missing stripe region appears as a dark horizontal band across the retinal scan.
+
+\subsection{Mask Generation Procedure}
+
+Mask generation was implemented procedurally during preprocessing. For each retinal OCT image:
+\begin{enumerate}
+    \item a stripe height $h$ is selected,
+    \item a vertical starting coordinate $y_0$ is sampled,
+    \item a binary mask $M$ is constructed,
+    \item and the corrupted image
+    \[
+    Y=M\odot X
+    \]
+    is computed.
+\end{enumerate}
+
+All masks operate on standardized image dimensions:
+\[
+128 \times 256.
+\]
+
+This ensures that corruption geometry remains consistent across all experiments. The generated masks are stored implicitly through tensor operations and used directly during:
+\begin{itemize}
+    \item baseline reconstruction,
+    \item diffusion conditioning,
+    \item and evaluation.
+\end{itemize}
+
+Because masks are generated dynamically, the framework can easily support future corruption strategies such as:
+\begin{itemize}
+    \item multiple stripe regions,
+    \item variable stripe widths,
+    \item irregular masks,
+    \item or pathology-aware masking.
+\end{itemize}
+
+\subsection{Mask Parameterization}
+
+The primary mask parameter is stripe height:
+\[
+h.
+\]
+
+Increasing $h$ increases reconstruction difficulty because larger portions of retinal anatomy are removed. Small stripe heights preserve substantial local context, making interpolation relatively straightforward, while larger masks require more global structural inference.
+
+The stripe position parameter
+\[
+y_0
+\]
+also influences reconstruction complexity. Different retinal regions exhibit different structural characteristics and reflectivity patterns. Corrupting highly reflective retinal boundaries or pathological regions may produce substantially more difficult reconstruction tasks.
+
+The stripe masks span the full image width:
+\[
+0 \le j < W.
+\]
+
+This forces reconstruction methods to recover:
+\begin{itemize}
+    \item layer continuity,
+    \item retinal geometry,
+    \item and global anatomical structure,
+\end{itemize}
+rather than simply interpolating isolated local pixels.
+
+The current implementation uses fixed stripe geometry for experimental consistency, although the framework remains extensible to more complex corruption schemes.
+
+\subsection{Visual Validation of Corruption Patterns}
+
+Visual inspection was performed to verify that synthetic masks behaved as intended. Validation confirmed that stripe corruption:
+\begin{itemize}
+    \item removed meaningful retinal structure,
+    \item preserved surrounding anatomical context,
+    \item and disrupted multiple retinal layers simultaneously.
+\end{itemize}
+
+The masks consistently produced structured missing regions that were:
+\begin{itemize}
+    \item visually interpretable,
+    \item anatomically meaningful,
+    \item and sufficiently difficult for reconstruction.
+\end{itemize}
+
+Inspection across disease categories showed that stripe masking remained effective under:
+\begin{itemize}
+    \item healthy anatomy,
+    \item retinal swelling,
+    \item fluid accumulation,
+    \item and irregular pathological deformation.
+\end{itemize}
+
+These validation steps were important because reconstruction difficulty depends strongly on corruption geometry. The selected stripe masks created a controlled experimental setting for comparing:
+\begin{itemize}
+    \item classical interpolation methods,
+    \item PDE diffusion approaches,
+    \item and diffusion-based generative reconstruction.
+\end{itemize}
+
+% =========================================================
+\section{Classical Inpainting Baselines}
+% =========================================================
+
+\subsection{Motivation for Baseline Comparisons}
+
+Before evaluating diffusion-based reconstruction, it is necessary to establish classical baseline methods. Baselines provide interpretable reference points for determining whether a generative model actually improves reconstruction quality.
+
+In retinal OCT imaging, local anatomical continuity is often strong enough that simple deterministic methods may already perform well. Consequently, a diffusion model should not only produce visually plausible reconstructions, but also outperform simpler interpolation-based approaches.
+
+The baseline methods considered in this project range from trivial reconstruction to more sophisticated PDE-inspired inpainting. These methods provide insight into:
+\begin{itemize}
+    \item the role of local smoothness assumptions,
+    \item the importance of edge propagation,
+    \item and the limitations of purely deterministic reconstruction.
+\end{itemize}
+
+The baselines also serve as important failure diagnostics. If a diffusion model underperforms classical methods, this suggests that the learned generative representation is not yet capturing retinal structure effectively.
+
+\subsection{Zero-Fill Reconstruction}
+
+The simplest baseline is zero-fill reconstruction. In this approach, missing pixels are not reconstructed at all. The corrupted image itself is treated as the final output:
+\[
+\hat{X}_{\mathrm{zero}}
+=
+Y
+=
+M \odot X.
+\]
+
+The missing stripe region therefore remains completely black after reconstruction.
+
+Although this method performs no inference, it provides a lower bound for reconstruction quality. Any meaningful reconstruction method should improve substantially over zero-fill masking.
+
+In retinal OCT images, zero-fill reconstruction produces severe discontinuities across retinal layers and destroys anatomical continuity. Consequently, it typically yields poor values for:
+\[
+\text{MSE},
+\quad
+\text{MAE},
+\quad
+\text{PSNR}.
+\]
+
+\subsection{Gaussian Blur Reconstruction}
+
+Gaussian reconstruction estimates missing pixels using local smoothing. The corrupted image is convolved with a Gaussian kernel:
+\[
+G_\sigma(x,y)
+=
+\frac{1}{2\pi\sigma^2}
+\exp
+\left(
+-\frac{x^2+y^2}{2\sigma^2}
+\right).
+\]
+
+The reconstructed image is then
+\[
+\hat{X}_{\mathrm{gauss}}
+=
+G_\sigma * Y,
+\]
+where $*$ denotes convolution.
+
+Gaussian smoothing propagates neighboring intensity values into the missing region and partially restores continuity across the stripe mask. However, the method assumes local smoothness and therefore oversmooths sharp retinal boundaries.
+
+In OCT reconstruction, Gaussian blur often removes fine anatomical detail and weakens high-frequency retinal structure. Thin retinal layers become blurred together, reducing reconstruction fidelity despite improving over zero-fill masking.
+
+\subsection{PDE-Based Diffusion Inpainting}
+
+PDE-based inpainting reconstructs missing regions using diffusion equations that propagate neighboring intensity structure inward.
+
+A common isotropic diffusion formulation is:
+\[
+\frac{\partial u}{\partial t}
+=
+\Delta u,
+\]
+where $\Delta$ denotes the Laplacian operator.
+
+The method iteratively smooths intensity variation while preserving continuity between neighboring pixels. Inpainting proceeds by evolving the image over artificial time until the missing region is filled.
+
+PDE-based reconstruction generally performs better than simple Gaussian smoothing because information propagates adaptively from surrounding structure rather than through uniform convolution alone.
+
+However, the method remains fundamentally local. Large missing regions require long-range anatomical inference, which PDE diffusion cannot model effectively. In retinal OCT images, PDE methods may preserve coarse continuity while still failing to reconstruct realistic retinal layer geometry.
+
+\subsection{Telea Fast Marching Inpainting}
+
+Telea inpainting reconstructs missing pixels using a fast marching method that propagates information inward from mask boundaries.
+
+Instead of relying purely on isotropic smoothing, Telea reconstruction prioritizes nearby boundary structure and local gradient information. Pixels closer to known regions are reconstructed first, and their values influence subsequent reconstruction steps.
+
+The method attempts to continue:
+\begin{itemize}
+    \item local edges,
+    \item intensity gradients,
+    \item and structural contours
+\end{itemize}
+across the missing region.
+
+Among the classical baselines tested in DiffIndEye, Telea inpainting produced the strongest overall reconstruction performance. Retinal layer continuity was often preserved substantially better than with Gaussian smoothing or PDE diffusion.
+
+However, Telea reconstruction still relies primarily on local structure propagation and may fail when large anatomical regions are missing or when pathology introduces substantial ambiguity.
+
+\subsection{Qualitative Comparison of Classical Methods}
+
+Visual inspection revealed clear differences between the baseline methods.
+
+Zero-fill reconstruction leaves a sharp black stripe across the retinal image and completely disrupts retinal continuity.
+
+Gaussian smoothing partially restores continuity but produces blurry reconstructions with oversmoothed boundaries. Thin retinal structures often become indistinct.
+
+PDE-based diffusion preserves continuity more effectively than Gaussian blur, particularly for gradual anatomical transitions. However, reconstructed regions may still appear overly smooth and lack detailed retinal structure.
+
+Telea inpainting produced the most visually coherent classical reconstructions. Retinal layers often extended more naturally across masked regions, and boundary continuity was preserved more effectively.
+
+Despite these improvements, all classical methods struggled when corruption removed larger portions of retinal anatomy. None of the deterministic baselines could reliably reconstruct fine pathological detail or globally consistent retinal geometry in difficult cases.
+
+\subsection{Quantitative Baseline Performance}
+
+Baseline performance was evaluated using:
+\[
+\text{MSE},
+\quad
+\text{MAE},
+\quad
+\text{PSNR}.
+\]
+
+Among the classical methods, Telea inpainting achieved the strongest overall performance. PDE-based diffusion generally outperformed Gaussian smoothing, while zero-fill reconstruction produced the weakest results.
+
+Representative evaluation results were:
+\[
+\text{Telea:}
+\quad
+\text{MSE} \approx 0.011,
+\quad
+\text{PSNR} \approx 28.6,
+\]
+\[
+\text{PDE:}
+\quad
+\text{MSE} \approx 0.032,
+\]
+\[
+\text{Gaussian:}
+\quad
+\text{MSE} \approx 0.135.
+\]
+
+These results demonstrate that relatively simple deterministic methods can already perform surprisingly well on structured OCT inpainting tasks. This observation becomes especially important later when evaluating the initial diffusion model, which initially underperformed several classical baselines despite substantially greater model complexity.
+
+% =========================================================
+\section{Diffusion-Based Inpainting}
+% =========================================================
+
+\subsection{Motivation for Generative Reconstruction}
+
+Classical inpainting methods reconstruct missing regions primarily through local interpolation and deterministic smoothing. While these approaches can preserve continuity in simple settings, they struggle when large anatomical regions are removed or when retinal structure becomes highly nonlinear.
+
+Retinal OCT reconstruction is fundamentally ambiguous. Multiple plausible anatomical completions may exist for the same corrupted image. Consequently, reconstruction can be interpreted probabilistically rather than deterministically.
+
+Generative models attempt to learn the underlying image distribution
+\[
+p_{\mathrm{data}}(x)
+\]
+directly from retinal scans. Instead of filling pixels using local heuristics alone, a generative model learns statistical structure from the dataset itself.
+
+Diffusion models are especially attractive because they:
+\begin{itemize}
+    \item provide stable generative training,
+    \item support iterative reconstruction,
+    \item and naturally model uncertainty through stochastic sampling.
+\end{itemize}
+
+The goal of DiffIndEye is therefore to study whether a conditional diffusion model can reconstruct anatomically plausible retinal OCT structure from masked observations.
+
+\subsection{Overview of Denoising Diffusion Models}
+
+Denoising diffusion probabilistic models generate images through iterative denoising. The framework consists of:
+\begin{itemize}
+    \item a forward process that gradually corrupts images with Gaussian noise,
+    \item and a reverse process that learns to remove this noise.
+\end{itemize}
+
+Starting from a clean image
+\[
+x_0,
+\]
+the forward diffusion process constructs a sequence
+\[
+x_1,x_2,\ldots,x_T
+\]
+that progressively approaches Gaussian noise.
+
+The reverse model then learns
+\[
+p_\theta(x_{t-1}\given x_t),
+\]
+allowing images to be reconstructed step-by-step from noisy states.
+
+Unlike GANs, diffusion models optimize a stable denoising objective and explicitly model probabilistic transitions between diffusion states.
+
+\subsection{Forward Noise Process}
+
+The forward diffusion process gradually corrupts an image using Gaussian noise:
+\[
+q(x_t \given x_{t-1})
+=
+\mathcal{N}
+\left(
+\sqrt{1-\beta_t}x_{t-1},
+\beta_t I
+\right),
+\]
+where:
+\begin{itemize}
+    \item $\beta_t$ is the variance schedule,
+    \item and $I$ is the identity covariance matrix.
+\end{itemize}
+
+Repeated application of this process produces increasingly noisy images. After sufficiently many steps,
+\[
+x_T
+\approx
+\mathcal{N}(0,I).
+\]
+
+A useful closed-form representation is:
+\[
+x_t
+=
+\sqrt{\bar{\alpha}_t}x_0
++
+\sqrt{1-\bar{\alpha}_t}\varepsilon,
+\]
+where:
+\[
+\varepsilon \sim \mathcal{N}(0,I),
+\]
+and
+\[
+\bar{\alpha}_t
+=
+\prod_{s=1}^t (1-\beta_s).
+\]
+
+This formulation allows noisy training samples to be generated efficiently without simulating every intermediate diffusion step explicitly.
+
+\subsection{Reverse Denoising Process}
+
+The reverse process attempts to reconstruct the clean image by removing Gaussian noise iteratively.
+
+The model learns:
+\[
+p_\theta(x_{t-1}\given x_t),
+\]
+which approximates the reverse diffusion dynamics.
+
+Rather than predicting the clean image directly, most diffusion implementations predict the added noise:
+\[
+\varepsilon_\theta(x_t,t).
+\]
+
+The training objective becomes:
+\[
+\mathcal{L}
+=
+\E
+\left[
+\|
+\varepsilon
+-
+\varepsilon_\theta(x_t,t)
+\|^2
+\right].
+\]
+
+During sampling, the model repeatedly denoises:
+\[
+x_T
+\rightarrow
+x_{T-1}
+\rightarrow
+\cdots
+\rightarrow
+x_0.
+\]
+
+This iterative refinement process allows diffusion models to generate highly structured images while preserving training stability.
+
+\subsection{Conditional Diffusion Framework}
+
+DiffIndEye uses conditional diffusion rather than unconditional image generation. Instead of generating arbitrary retinal OCT scans, the model reconstructs missing regions conditioned on the observed image.
+
+The objective is therefore to model:
+\[
+p(X \given Y,M),
+\]
+where:
+\begin{itemize}
+    \item $X$ is the clean retinal image,
+    \item $Y$ is the masked observation,
+    \item and $M$ is the corruption mask.
+\end{itemize}
+
+Conditioning constrains the reconstruction process so that observed retinal structure remains fixed while missing regions are reconstructed probabilistically.
+
+This transforms diffusion from a pure image synthesis problem into a structured inverse problem.
+
+\subsection{Conditioning on Masked OCT Images}
+
+The diffusion model receives three primary inputs:
+\[
+(X_t,Y,M).
+\]
+
+Here:
+\begin{itemize}
+    \item $X_t$ is the noisy diffusion state,
+    \item $Y$ is the masked retinal image,
+    \item and $M$ is the binary corruption mask.
+\end{itemize}
+
+These tensors are concatenated along the channel dimension before convolutional processing:
+\[
+Z
+=
+[X_t,Y,M].
+\]
+
+The conditioning image provides anatomical context surrounding the missing stripe region, while the mask explicitly identifies which pixels are corrupted.
+
+The model must therefore learn to:
+\begin{itemize}
+    \item preserve visible retinal structure,
+    \item infer missing anatomy,
+    \item and maintain global retinal continuity.
+\end{itemize}
+
+\subsection{Time Conditioning and Positional Embeddings}
+
+Because the reverse process depends on diffusion timestep $t$, the model must receive information about the current noise level.
+
+Diffusion timesteps are encoded using sinusoidal positional embeddings:
+\[
+\gamma(t)
+=
+\left(
+\sin(\omega_1 t),
+\cos(\omega_1 t),
+\ldots,
+\sin(\omega_k t),
+\cos(\omega_k t)
+\right).
+\]
+
+These embeddings provide a continuous representation of diffusion time and allow the model to adapt its denoising behavior depending on the current noise scale.
+
+The timestep embedding is projected through a small multilayer perceptron before being injected into convolutional feature representations.
+
+Early diffusion states require small denoising corrections, while later states require large-scale structural reconstruction from nearly pure noise.
+
+\subsection{Initial Encoder--Decoder Architecture}
+
+The initial DiffIndEye model uses a lightweight convolutional encoder--decoder architecture.
+
+The model consists of:
+\begin{itemize}
+    \item convolutional encoding layers,
+    \item intermediate latent feature processing,
+    \item and convolutional decoding layers.
+\end{itemize}
+
+The baseline architecture processes:
+\[
+128 \times 256
+\]
+retinal tensors and contains approximately:
+\[
+115{,}000
+\]
+trainable parameters.
+
+ReLU nonlinearities are used throughout the network:
+\[
+\sigma(x)=\max(0,x).
+\]
+
+The architecture was intentionally kept simple in order to:
+\begin{itemize}
+    \item validate the reconstruction pipeline,
+    \item test diffusion scheduling,
+    \item and establish an experimental baseline before introducing more sophisticated architectures.
+\end{itemize}
+
+\subsection{Current Architectural Limitations}
+
+Although the initial diffusion framework trains successfully, reconstruction quality remains limited. The baseline architecture underperforms several classical inpainting methods despite optimizing the diffusion loss successfully.
+
+One major limitation is the absence of a U-Net structure. The current encoder--decoder lacks:
+\begin{itemize}
+    \item skip connections,
+    \item multi-scale feature propagation,
+    \item and hierarchical spatial fusion.
+\end{itemize}
+
+As a result, high-frequency retinal detail is often lost during reconstruction.
+
+The model also operates entirely in pixel space without:
+\begin{itemize}
+    \item latent compression,
+    \item attention mechanisms,
+    \item or multi-resolution representations.
+\end{itemize}
+
+Consequently, the network struggles to preserve:
+\begin{itemize}
+    \item thin retinal layers,
+    \item sharp reflectivity transitions,
+    \item and globally coherent retinal geometry.
+\end{itemize}
+
+These limitations motivate future extensions involving:
+\begin{itemize}
+    \item U-Net diffusion architectures,
+    \item attention-based conditioning,
+    \item improved sampling procedures,
+    \item and more expressive feature hierarchies.
+\end{itemize}
+
+% =========================================================
+\section{Training Framework}
+% =========================================================
+
+\subsection{Training Objectives}
+
+The primary objective of the diffusion model is to learn how to reconstruct retinal OCT structure from noisy and partially observed inputs. Rather than predicting the clean image directly, the model is trained to estimate the Gaussian noise added during the forward diffusion process.
+
+Given a clean retinal image
+\[
+x_0,
+\]
+a diffusion timestep
+\[
+t,
+\]
+and sampled Gaussian noise
+\[
+\varepsilon \sim \mathcal{N}(0,I),
+\]
+the noisy image is generated as
+\[
+x_t
+=
+\sqrt{\bar{\alpha}_t}x_0
++
+\sqrt{1-\bar{\alpha}_t}\varepsilon.
+\]
+
+The model then learns a mapping
+\[
+\varepsilon_\theta(x_t,t,Y,M)
+\]
+that predicts the noise component from:
+\begin{itemize}
+    \item the noisy diffusion state,
+    \item the masked retinal image,
+    \item the binary mask,
+    \item and the timestep embedding.
+\end{itemize}
+
+The overall goal is therefore to approximate the reverse denoising process well enough that retinal structure can be reconstructed iteratively from noisy masked observations.
+
+\subsection{Noise Prediction Formulation}
+
+The baseline DiffIndEye implementation uses the standard DDPM noise prediction objective:
+\[
+\mathcal{L}
+=
+\E
+\left[
+\|
+\varepsilon
+-
+\varepsilon_\theta(x_t,t,Y,M)
+\|^2
+\right].
+\]
+
+Instead of predicting the clean image directly, the model predicts the noise that was added during diffusion. This formulation improves numerical stability and simplifies optimization.
+
+The noisy image
+\[
+x_t
+\]
+is sampled directly using the closed-form diffusion equation:
+\[
+x_t
+=
+\sqrt{\bar{\alpha}_t}x_0
++
+\sqrt{1-\bar{\alpha}_t}\varepsilon.
+\]
+
+At each training iteration:
+\begin{enumerate}
+    \item a retinal image is sampled,
+    \item a corruption mask is applied,
+    \item a timestep $t$ is sampled uniformly,
+    \item Gaussian noise is generated,
+    \item and the model predicts the noise realization.
+\end{enumerate}
+
+The network therefore learns denoising behavior across the entire diffusion trajectory rather than only at a fixed noise level.
+
+\subsection{Masked Loss Strategy}
+
+The baseline implementation optionally supports a masked reconstruction loss. Instead of computing error across the entire image, the loss may focus primarily on corrupted regions:
+\[
+\mathcal{L}_{\mathrm{masked}}
+=
+\|
+(1-M)
+\odot
+(
+\varepsilon
+-
+\varepsilon_\theta
+)
+\|^2.
+\]
+
+This encourages the model to prioritize reconstruction quality inside the missing stripe region rather than allocating excessive capacity toward already visible anatomy.
+
+Without masked weighting, the optimization objective may become dominated by observed retinal structure because most image pixels remain uncorrupted. The masked loss therefore increases emphasis on the actual inpainting task.
+
+In practice, both masked and full-image objectives can be useful. Full-image denoising encourages global consistency, while masked denoising emphasizes missing-region reconstruction.
+
+\subsection{Diffusion Scheduling}
+
+The diffusion schedule controls how noise is added throughout the forward process. DiffIndEye uses a linear variance schedule:
+\[
+\beta_t
+\in
+[\beta_{\min},\beta_{\max}],
+\]
+with:
+\[
+\beta_{\min}=10^{-4},
+\qquad
+\beta_{\max}=2\times10^{-2}.
+\]
+
+The cumulative signal coefficient is:
+\[
+\bar{\alpha}_t
+=
+\prod_{s=1}^t(1-\beta_s).
+\]
+
+The schedule determines:
+\begin{itemize}
+    \item how rapidly image information is destroyed,
+    \item the signal-to-noise ratio at each timestep,
+    \item and the difficulty of the denoising problem.
+\end{itemize}
+
+The baseline implementation uses:
+\[
+T=1000
+\]
+diffusion steps. Early timesteps preserve substantial retinal structure, while later timesteps approach nearly pure Gaussian noise.
+
+The schedule plays a critical role in training stability. If noise grows too rapidly, the model receives almost no structural information at later timesteps. If noise grows too slowly, the reverse process may not learn sufficiently robust denoising behavior.
+
+\subsection{Optimization Procedure}
+
+The model is trained using stochastic gradient descent with minibatches of retinal OCT images. Optimization uses the Adam optimizer:
+\[
+\theta
+\leftarrow
+\theta
+-
+\eta
+\nabla_\theta \mathcal{L},
+\]
+where:
+\begin{itemize}
+    \item $\theta$ denotes network parameters,
+    \item and $\eta$ is the learning rate.
+\end{itemize}
+
+Typical training configurations included:
+\[
+\text{batch size}=8,
+\qquad
+\text{learning rate}=10^{-4}.
+\]
+
+Training proceeds iteratively across sampled retinal images and diffusion timesteps. At each iteration:
+\begin{enumerate}
+    \item a batch is loaded,
+    \item masks are generated,
+    \item noisy diffusion states are sampled,
+    \item the model predicts noise,
+    \item and gradients are updated.
+\end{enumerate}
+
+Training was performed initially on CPU hardware, which significantly increased iteration time and motivated later refactoring for more efficient experimentation.
+
+\subsection{Checkpointing and Experiment Tracking}
+
+Checkpointing was introduced to support reproducible experimentation and iterative model development.
+
+During training, model states are periodically saved:
+\[
+\theta^{(k)}
+\rightarrow
+\texttt{checkpoint}_k.
+\]
+
+Each checkpoint contains:
+\begin{itemize}
+    \item model parameters,
+    \item optimizer state,
+    \item configuration settings,
+    \item and training metadata.
+\end{itemize}
+
+Checkpoints are stored using timestamped run directories:
+\[
+\texttt{run\_name\_YYYYMMDD\_HHMMSS}.
+\]
+
+This structure allows:
+\begin{itemize}
+    \item comparison between diffusion runs,
+    \item rollback to earlier experiments,
+    \item and systematic tuning of hyperparameters.
+\end{itemize}
+
+Training logs additionally track:
+\begin{itemize}
+    \item loss trajectories,
+    \item checkpoint timing,
+    \item and configuration settings.
+\end{itemize}
+
+These procedures became increasingly important as the project evolved from exploratory notebooks into a reusable research framework.
+
+\subsection{Refactoring into a Modular Research Framework}
+
+The original implementation was developed primarily through notebooks. As experimentation expanded, the project was refactored into a modular source-code framework.
+
+Core functionality was separated into reusable modules including:
+\begin{itemize}
+    \item preprocessing utilities,
+    \item dataset loading,
+    \item diffusion schedules,
+    \item model architectures,
+    \item training utilities,
+    \item sampling methods,
+    \item and evaluation procedures.
+\end{itemize}
+
+This refactoring improved:
+\begin{itemize}
+    \item reproducibility,
+    \item maintainability,
+    \item debugging,
+    \item and extensibility.
+\end{itemize}
+
+Most importantly, modularization allows future diffusion architectures to be tested without rewriting the entire reconstruction pipeline.
+
+The framework was intentionally designed so that architectural experimentation can focus primarily on:
+\begin{itemize}
+    \item diffusion models,
+    \item sampling methods,
+    \item and reconstruction objectives,
+\end{itemize}
+while preserving a stable preprocessing and evaluation pipeline.
+
+\subsection{Script-Based Experiment Workflow}
+
+After refactoring, experiments were organized around two primary scripts:
+\[
+\texttt{train\_ddpm.py}
+\]
+and
+\[
+\texttt{evaluate\_methods.py}.
+\]
+
+The training script performs:
+\begin{itemize}
+    \item dataset loading,
+    \item diffusion training,
+    \item checkpoint generation,
+    \item and logging.
+\end{itemize}
+
+The evaluation script supports two major workflows:
+\begin{enumerate}
+    \item comparing diffusion models against classical baselines,
+    \item and comparing different diffusion checkpoints against one another.
+\end{enumerate}
+
+This design allows rapid iteration during architectural tuning:
+\[
+\texttt{train}
+\rightarrow
+\texttt{evaluate}
+\rightarrow
+\texttt{modify}
+\rightarrow
+\texttt{retrain}.
+\]
+
+The modular workflow also simplifies future experimentation involving:
+\begin{itemize}
+    \item U-Net architectures,
+    \item alternative noise schedules,
+    \item improved samplers,
+    \item and uncertainty-aware reconstruction.
+\end{itemize}
+
+By separating training, evaluation, preprocessing, and model definition into reusable components, DiffIndEye evolved from a notebook prototype into a reproducible experimental framework for diffusion-based retinal OCT reconstruction.
 
 
 % =========================================================
-\section{Image Preprocessing}
+\section{Evaluation Methodology}
 % =========================================================
 
-\subsection{Normalization}
+\subsection{Evaluation Objectives}
 
+The evaluation framework was designed to compare classical inpainting methods against diffusion-based reconstruction under controlled synthetic corruption. The primary objective was to determine whether the diffusion model could reconstruct retinal OCT structure more effectively than deterministic baselines.
 
+Evaluation focused on both:
+\begin{itemize}
+    \item quantitative reconstruction accuracy,
+    \item and qualitative anatomical plausibility.
+\end{itemize}
 
-\subsection{Image Resizing}
+Because retinal OCT reconstruction is structurally constrained, numerical accuracy alone is insufficient. Reconstructions must also preserve:
+\begin{itemize}
+    \item retinal layer continuity,
+    \item reflectivity transitions,
+    \item and global anatomical organization.
+\end{itemize}
 
+The evaluation pipeline therefore combined pixel-wise metrics with visual inspection across multiple reconstruction methods and checkpoints.
 
+\subsection{Mean Squared Error}
 
-\subsection{Data Augmentation}
+Mean squared error measures the average squared difference between reconstructed and ground-truth intensities:
+\[
+\mathrm{MSE}
+=
+\frac{1}{HW}
+\sum_{i=1}^H
+\sum_{j=1}^W
+(
+X_{ij}-\hat{X}_{ij}
+)^2.
+\]
 
+Lower MSE values indicate closer numerical agreement between the reconstruction and the original retinal image.
 
+Because squaring penalizes large deviations heavily, MSE is sensitive to:
+\begin{itemize}
+    \item strong reconstruction artifacts,
+    \item boundary discontinuities,
+    \item and large intensity errors.
+\end{itemize}
+
+Although MSE is widely used, it does not necessarily correlate perfectly with anatomical realism. Two reconstructions may have similar MSE values while exhibiting very different retinal structure visually.
+
+\subsection{Mean Absolute Error}
+
+Mean absolute error measures the average absolute reconstruction difference:
+\[
+\mathrm{MAE}
+=
+\frac{1}{HW}
+\sum_{i=1}^H
+\sum_{j=1}^W
+|X_{ij}-\hat{X}_{ij}|.
+\]
+
+Unlike MSE, MAE penalizes errors linearly rather than quadratically. As a result, it is less sensitive to isolated large reconstruction deviations.
+
+MAE provides a complementary measure of reconstruction fidelity and is often easier to interpret directly because it reflects average pixel-level reconstruction error.
+
+\subsection{Peak Signal-to-Noise Ratio}
+
+Peak signal-to-noise ratio measures reconstruction quality relative to the maximum possible image intensity:
+\[
+\mathrm{PSNR}
+=
+10
+\log_{10}
+\left(
+\frac{L^2}{\mathrm{MSE}}
+\right),
+\]
+where:
+\begin{itemize}
+    \item $L$ is the maximum pixel intensity.
+\end{itemize}
+
+Because retinal OCT images were normalized into
+\[
+[0,1],
+\]
+the metric simplifies to:
+\[
+\mathrm{PSNR}
+=
+10
+\log_{10}
+\left(
+\frac{1}{\mathrm{MSE}}
+\right).
+\]
+
+Higher PSNR values indicate better reconstruction quality. The metric is commonly used in image restoration because it summarizes reconstruction fidelity on a logarithmic scale.
+
+However, PSNR still remains a pixel-wise metric and may not fully capture anatomical realism or structural continuity.
+
+\subsection{Masked-Region Evaluation}
+
+Although reconstruction metrics can be computed across the full image, the primary region of interest is the corrupted stripe mask.
+
+Let:
+\[
+M
+\in
+\{0,1\}^{H \times W}
+\]
+denote the binary mask. The masked reconstruction error is computed only over pixels satisfying:
+\[
+M_{ij}=0.
+\]
+
+For example, masked MSE becomes:
+\[
+\mathrm{MSE}_{\mathrm{masked}}
+=
+\frac{
+\sum_{i,j}
+(1-M_{ij})
+(X_{ij}-\hat{X}_{ij})^2
+}{
+\sum_{i,j}(1-M_{ij})
+}.
+\]
+
+Masked evaluation is important because full-image metrics may be dominated by already observed retinal structure. Focusing on the missing region isolates the actual inpainting problem.
+
+This evaluation strategy provides a more meaningful comparison between reconstruction methods.
+
+\subsection{Baseline-vs-Diffusion Comparisons}
+
+The first evaluation workflow compares the diffusion model against classical baselines including:
+\begin{itemize}
+    \item zero-fill reconstruction,
+    \item Gaussian smoothing,
+    \item PDE-based diffusion,
+    \item and Telea inpainting.
+\end{itemize}
+
+Each method reconstructs identical masked retinal images under the same corruption settings. Quantitative metrics are then averaged across evaluation samples:
+\[
+\{
+X_i
+\}_{i=1}^N.
+\]
+
+This comparison establishes whether the diffusion model improves upon deterministic interpolation approaches.
+
+The initial experiments revealed that classical methods, especially Telea inpainting, performed surprisingly well relative to the baseline diffusion model. This result became one of the major motivations for later architectural improvements.
+
+\subsection{Diffusion-vs-Diffusion Comparisons}
+
+The second evaluation workflow compares different diffusion checkpoints against one another.
+
+Given checkpoints:
+\[
+\theta_1,\theta_2,\ldots,\theta_k,
+\]
+the framework evaluates reconstruction quality across:
+\begin{itemize}
+    \item different training runs,
+    \item different hyperparameter settings,
+    \item and different architectural variants.
+\end{itemize}
+
+This workflow supports iterative experimentation:
+\[
+\texttt{train}
+\rightarrow
+\texttt{evaluate}
+\rightarrow
+\texttt{modify}
+\rightarrow
+\texttt{retrain}.
+\]
+
+Diffusion-vs-diffusion evaluation became especially important after the project was refactored into a modular experimental framework.
+
+The approach allows systematic study of:
+\begin{itemize}
+    \item training stability,
+    \item sampling quality,
+    \item architectural bottlenecks,
+    \item and reconstruction behavior across checkpoints.
+\end{itemize}
+
+\subsection{Qualitative Visualization Pipeline}
+
+Quantitative metrics alone are insufficient for evaluating retinal OCT reconstruction because low numerical error does not necessarily imply anatomically realistic structure.
+
+Consequently, visual inspection was incorporated throughout the evaluation pipeline.
+
+For each reconstruction method, visualization includes:
+\begin{itemize}
+    \item the original retinal image,
+    \item the masked image,
+    \item and the reconstructed output.
+\end{itemize}
+
+These visual comparisons allow inspection of:
+\begin{itemize}
+    \item retinal layer continuity,
+    \item boundary preservation,
+    \item anatomical plausibility,
+    \item and reconstruction artifacts.
+\end{itemize}
+
+The visualization pipeline also revealed several important failure modes in the initial diffusion model, including:
+\begin{itemize}
+    \item blurry retinal structure,
+    \item poor high-frequency reconstruction,
+    \item and incomplete anatomical continuity.
+\end{itemize}
+
+In contrast, Telea inpainting often preserved retinal layers surprisingly well despite its comparatively simple deterministic formulation.
+
+These observations reinforced the importance of combining:
+\begin{itemize}
+    \item numerical evaluation,
+    \item visual inspection,
+    \item and anatomical interpretation
+\end{itemize}
+when studying retinal OCT reconstruction.
 
 % =========================================================
-\section{Mask Generation}
+\section{Experimental Results}
 % =========================================================
 
-\subsection{Problem Formulation}
+\subsection{Classical Baseline Performance}
 
+The classical reconstruction baselines produced substantially different reconstruction behavior under stripe corruption.
 
+Zero-fill reconstruction performed worst, as expected. The masked stripe remained completely black and retinal continuity was entirely disrupted. Quantitative metrics were correspondingly poor:
+\[
+\mathrm{MSE}
+\approx
+0.169,
+\qquad
+\mathrm{PSNR}
+\approx
+15.1.
+\]
 
-\subsection{Mask Types}
+Gaussian smoothing improved continuity by propagating nearby intensity information into the missing region:
+\[
+\mathrm{MSE}
+\approx
+0.135.
+\]
 
+However, retinal boundaries became visibly blurred and thin anatomical structures were often lost.
 
+PDE-based diffusion reconstruction performed substantially better:
+\[
+\mathrm{MSE}
+\approx
+0.032,
+\qquad
+\mathrm{PSNR}
+\approx
+22.8.
+\]
 
-% =========================================================
-\section{Classical Inpainting Methods}
-% =========================================================
+The method preserved coarse anatomical continuity and reduced visible discontinuities across the stripe mask.
 
-\subsection{PDE-Based Diffusion}
+Among all classical methods, Telea inpainting achieved the strongest performance:
+\[
+\mathrm{MSE}
+\approx
+0.011,
+\qquad
+\mathrm{MAE}
+\approx
+0.071,
+\qquad
+\mathrm{PSNR}
+\approx
+28.6.
+\]
 
+Telea reconstruction preserved retinal layer continuity remarkably well and produced visually coherent reconstructions despite its relatively simple deterministic formulation.
 
+\subsection{Initial Diffusion Training Results}
 
-\subsection{Baseline Methods}
+The initial diffusion model trained successfully from an optimization perspective. The DDPM objective decreased steadily during training, and the model learned stable denoising behavior across diffusion timesteps.
 
+Training was performed using:
+\[
+T=1000
+\]
+diffusion steps with:
+\[
+\beta_{\min}=10^{-4},
+\qquad
+\beta_{\max}=2\times10^{-2}.
+\]
 
+The baseline architecture contained approximately:
+\[
+115{,}169
+\]
+trainable parameters and operated on:
+\[
+128 \times 256
+\]
+retinal OCT tensors.
 
-% =========================================================
-\section{Diffusion Model}
-% =========================================================
+Checkpointing confirmed that:
+\begin{itemize}
+    \item tensor dimensions remained stable,
+    \item diffusion schedules behaved correctly,
+    \item and loss values remained finite throughout training.
+\end{itemize}
 
-\subsection{Forward Diffusion Process}
+Despite stable optimization, reconstruction quality remained relatively weak compared to the classical baselines.
 
+Representative diffusion evaluation results were:
+\[
+\mathrm{MSE}
+\approx
+0.340,
+\qquad
+\mathrm{PSNR}
+\approx
+12.0.
+\]
 
+Thus, although the model learned the diffusion objective successfully, anatomical reconstruction quality remained poor.
 
-\subsection{Conditional Inpainting Framework}
+\subsection{Training Stability Analysis}
 
+Training stability improved substantially after refactoring the project into a modular framework.
 
+Early notebook-based experimentation occasionally produced:
+\begin{itemize}
+    \item tensor mismatch issues,
+    \item checkpoint inconsistencies,
+    \item and unstable evaluation workflows.
+\end{itemize}
 
-\subsection{Model Architecture}
+After refactoring, the pipeline supported:
+\begin{itemize}
+    \item deterministic preprocessing,
+    \item standardized checkpointing,
+    \item reproducible evaluation,
+    \item and automated experiment tracking.
+\end{itemize}
 
+Sanity checks confirmed:
+\[
+\bar{\alpha}_0 \approx 1,
+\qquad
+\bar{\alpha}_T \approx 0,
+\]
+ensuring that diffusion scheduling behaved correctly.
 
+Training losses generally decreased smoothly without catastrophic divergence. However, stable optimization did not necessarily correspond to strong reconstruction performance. The model frequently learned to reduce denoising error numerically while still failing to reconstruct realistic retinal anatomy.
 
-% =========================================================
-\section{Training Procedure}
-% =========================================================
+This observation became one of the central findings of the initial experiments.
 
-\subsection{Loss Function}
+\subsection{Reconstruction Quality Analysis}
 
+Visual reconstruction quality varied substantially across methods.
 
+Telea inpainting consistently preserved retinal layer continuity better than the diffusion model. PDE diffusion also produced relatively coherent retinal structure in many cases.
 
-\subsection{Optimization}
+In contrast, the baseline DDPM frequently produced:
+\begin{itemize}
+    \item blurry retinal layers,
+    \item weak boundary reconstruction,
+    \item and incomplete anatomical continuity.
+\end{itemize}
 
+Although the diffusion outputs often removed the visible stripe artifact itself, the reconstructed regions lacked detailed retinal structure. Thin retinal interfaces became oversmoothed, and the reconstructed stripe region often appeared visually inconsistent with surrounding anatomy.
 
+These results suggest that the baseline architecture successfully learned coarse denoising behavior but failed to capture sufficiently rich anatomical representations.
 
-% =========================================================
-\section{Evaluation}
-% =========================================================
+\subsection{Failure Cases and Artifacts}
 
-\subsection{Reconstruction Metrics}
+Several recurring failure modes were observed during diffusion reconstruction.
 
+The most common issue was excessive smoothing. Reconstructed regions frequently lost:
+\begin{itemize}
+    \item thin retinal boundaries,
+    \item sharp reflectivity transitions,
+    \item and local pathological detail.
+\end{itemize}
 
+The model also struggled with long-range anatomical continuity. In some reconstructions, retinal layers failed to align properly across the masked region.
 
-\subsection{Mask Sensitivity Experiments}
+Additional artifacts included:
+\begin{itemize}
+    \item blurry stripe interiors,
+    \item inconsistent intensity scaling,
+    \item and noisy reconstruction textures.
+\end{itemize}
 
+These failure modes likely arise from several architectural limitations:
+\begin{itemize}
+    \item lack of skip connections,
+    \item insufficient multi-scale feature propagation,
+    \item shallow convolutional depth,
+    \item and limited spatial context modeling.
+\end{itemize}
 
+The experiments therefore suggest that the diffusion objective alone is insufficient for strong OCT reconstruction without an architecture capable of preserving fine anatomical detail.
 
-% =========================================================
-\section{Uncertainty Analysis}
-% =========================================================
+\subsection{Comparison Against Classical Methods}
 
-\subsection{Multiple Reconstruction Sampling}
+One of the most important findings of the project was that the initial diffusion model underperformed several classical baselines despite substantially greater model complexity.
 
+The strongest classical method, Telea inpainting, achieved:
+\[
+\mathrm{MSE}
+\approx
+0.011,
+\]
+while the diffusion model produced:
+\[
+\mathrm{MSE}
+\approx
+0.340.
+\]
 
+This result demonstrates that local deterministic methods remain highly competitive for structured OCT inpainting tasks.
 
-\subsection{Uncertainty Maps}
+The comparison also highlights an important distinction between:
+\begin{itemize}
+    \item learning a diffusion objective,
+    \item and learning anatomically meaningful reconstruction.
+\end{itemize}
 
+The baseline DDPM successfully optimized its denoising loss but did not yet learn retinal structure sufficiently well to outperform simpler interpolation methods.
 
+Rather than invalidating diffusion reconstruction entirely, these results identify the importance of:
+\begin{itemize}
+    \item architectural design,
+    \item spatial feature propagation,
+    \item and reconstruction inductive bias.
+\end{itemize}
 
-% =========================================================
-\section{Results}
-% =========================================================
+\subsection{Observations from Refactored Experiments}
 
-\subsection{Qualitative Results}
+The refactored experimental framework substantially improved the ability to analyze diffusion behavior systematically.
 
+Separating preprocessing, training, checkpointing, sampling, and evaluation into modular scripts enabled rapid experimentation:
+\[
+\texttt{train}
+\rightarrow
+\texttt{evaluate}
+\rightarrow
+\texttt{modify}
+\rightarrow
+\texttt{retrain}.
+\]
 
+The framework now supports:
+\begin{itemize}
+    \item baseline-vs-diffusion evaluation,
+    \item diffusion-vs-diffusion checkpoint comparison,
+    \item reproducible experiment logging,
+    \item and scalable architectural experimentation.
+\end{itemize}
 
-\subsection{Quantitative Results}
+Most importantly, the refactoring clarified that the primary bottleneck is no longer the experimental infrastructure itself, but rather the diffusion architecture.
 
+The current results therefore establish:
+\begin{itemize}
+    \item a stable preprocessing and evaluation framework,
+    \item a functioning conditional diffusion pipeline,
+    \item and a strong baseline for future U-Net-based diffusion development.
+\end{itemize}
 
 
 % =========================================================
 \section{Discussion}
 % =========================================================
 
+\subsection{Interpretation of Experimental Findings}
+
+The experiments demonstrate that retinal OCT inpainting is substantially more difficult than standard image interpolation tasks. Although the diffusion framework trained successfully from an optimization perspective, the resulting reconstructions frequently lacked fine anatomical detail and coherent retinal structure.
+
+At the same time, several classical methods performed unexpectedly well. In particular, Telea inpainting preserved retinal continuity far more effectively than anticipated given its comparatively simple deterministic formulation.
+
+These findings suggest that retinal OCT images possess strong local geometric regularity. Because retinal layers are spatially smooth and horizontally continuous, local propagation methods can often reconstruct moderate corruption regions effectively without requiring highly expressive generative models.
+
+The experiments therefore highlight an important distinction between:
+\[
+\text{successful denoising optimization}
+\neq
+\text{successful anatomical reconstruction}.
+\]
+
+A model may minimize diffusion loss while still failing to preserve clinically meaningful retinal structure.
+
+\subsection{Why Classical Methods Currently Outperform Diffusion}
+
+The initial diffusion model underperformed several classical baselines despite substantially greater model complexity. This result appears surprising initially, but several factors help explain the outcome.
+
+First, the baseline DDPM architecture is relatively shallow and lacks mechanisms for preserving high-resolution spatial detail. Classical methods such as Telea inpainting directly propagate local edge and boundary information, which is especially effective for horizontally structured retinal anatomy.
+
+Second, the reconstruction task itself remains relatively local under the current stripe corruption setup. Since surrounding retinal structure remains visible, deterministic propagation methods can often interpolate the missing region effectively without requiring sophisticated generative reasoning.
+
+Third, diffusion models are highly dependent on architecture quality. The diffusion objective alone does not guarantee strong image reconstruction performance. If the network lacks sufficient representational capacity or spatial inductive bias, the learned denoising process may become overly smooth and anatomically imprecise.
+
+The current results therefore do not imply that diffusion reconstruction is fundamentally ineffective for OCT imaging. Rather, they indicate that the present architecture is insufficiently expressive relative to the complexity of the reconstruction problem.
+
+\subsection{Architectural Bottlenecks in the Initial DDPM}
+
+Several architectural limitations likely contributed to the weak diffusion performance.
+
+The most significant limitation is the absence of a U-Net backbone. The current encoder--decoder architecture lacks:
+\begin{itemize}
+    \item skip connections,
+    \item multi-scale feature fusion,
+    \item and hierarchical spatial representations.
+\end{itemize}
+
+As a result, high-frequency retinal information is frequently lost during encoding and reconstruction. Thin retinal boundaries and sharp reflectivity transitions become oversmoothed.
+
+The model also operates entirely in pixel space without:
+\begin{itemize}
+    \item latent compression,
+    \item attention mechanisms,
+    \item or global context modeling.
+\end{itemize}
+
+Retinal OCT reconstruction requires preserving both:
+\begin{itemize}
+    \item local anatomical detail,
+    \item and long-range retinal continuity.
+\end{itemize}
+
+The baseline architecture appears capable of learning coarse denoising behavior but struggles to preserve detailed retinal geometry consistently across the masked region.
+
+These observations strongly motivate future extensions involving:
+\begin{itemize}
+    \item U-Net diffusion architectures,
+    \item multi-resolution representations,
+    \item and attention-based feature propagation.
+\end{itemize}
+
+\subsection{Challenges of OCT Structural Reconstruction}
+
+Retinal OCT reconstruction presents several challenges that distinguish it from ordinary natural-image inpainting.
+
+First, retinal anatomy is highly structured. Small geometric distortions may correspond to clinically meaningful pathology. Consequently, reconstructions must preserve:
+\begin{itemize}
+    \item retinal layer continuity,
+    \item subtle boundary transitions,
+    \item and pathological morphology.
+\end{itemize}
+
+Second, OCT images contain both low-frequency and high-frequency structure simultaneously. Global retinal curvature must remain anatomically coherent, while thin reflective interfaces must remain sharp and spatially aligned.
+
+Third, the reconstruction problem is fundamentally ambiguous. Multiple plausible completions may exist for the same masked retinal image:
+\[
+p(X \given Y,M).
+\]
+
+This ambiguity becomes increasingly important when large portions of anatomy are removed or when pathological deformation is severe.
+
+Finally, retinal OCT images contain acquisition-specific variability including:
+\begin{itemize}
+    \item speckle noise,
+    \item attenuation,
+    \item motion artifacts,
+    \item and contrast variation.
+\end{itemize}
+
+A successful reconstruction model must therefore balance:
+\begin{itemize}
+    \item denoising,
+    \item anatomical preservation,
+    \item and probabilistic uncertainty modeling.
+\end{itemize}
+
+\subsection{Lessons Learned During Refactoring}
+
+One of the most important outcomes of the project was the transition from exploratory notebooks to a modular research framework.
+
+Early experimentation demonstrated that notebook-based development becomes increasingly difficult as:
+\begin{itemize}
+    \item architectures evolve,
+    \item checkpoints accumulate,
+    \item and evaluation pipelines become more complex.
+\end{itemize}
+
+Refactoring the project into reusable modules substantially improved:
+\begin{itemize}
+    \item debugging,
+    \item reproducibility,
+    \item checkpoint management,
+    \item and experimental scalability.
+\end{itemize}
+
+Separating preprocessing, training, evaluation, and sampling into standalone scripts clarified the true bottlenecks of the system. Once the infrastructure stabilized, it became clear that the primary limitation was no longer experimental organization but rather architectural expressiveness.
+
+The refactored framework also enables substantially faster iteration for future experiments involving:
+\[
+\texttt{train}
+\rightarrow
+\texttt{evaluate}
+\rightarrow
+\texttt{modify}
+\rightarrow
+\texttt{retrain}.
+\]
+
+This workflow is essential for systematic diffusion model development.
+
+\subsection{Importance of Reproducible Experiment Pipelines}
+
+Diffusion models are highly sensitive to:
+\begin{itemize}
+    \item preprocessing,
+    \item noise schedules,
+    \item hyperparameters,
+    \item and sampling procedures.
+\end{itemize}
+
+Consequently, reproducibility is especially important for meaningful experimentation.
+
+The modular DiffIndEye framework was designed to support:
+\begin{itemize}
+    \item deterministic preprocessing,
+    \item standardized masking,
+    \item checkpoint-based evaluation,
+    \item and repeatable reconstruction experiments.
+\end{itemize}
+
+Timestamped checkpointing, script-based evaluation, and centralized configuration management made it possible to compare diffusion runs systematically rather than relying on isolated notebook outputs.
+
+This infrastructure becomes increasingly valuable as architectural complexity increases. Future experimentation involving:
+\begin{itemize}
+    \item U-Net diffusion,
+    \item attention mechanisms,
+    \item alternative schedulers,
+    \item and uncertainty-aware reconstruction
+\end{itemize}
+would be difficult to manage reliably without a reproducible experimental framework.
+
+The project therefore demonstrates that strong infrastructure design is not separate from machine learning research itself. In practice, reproducible experimentation is often necessary before meaningful architectural progress becomes possible.
 
 
 % =========================================================
-\section{Future Work}
+\section{Future Directions}
 % =========================================================
 
+\subsection{U-Net Based Diffusion Architectures}
 
+The most immediate extension of DiffIndEye is the introduction of a U-Net-based diffusion backbone. U-Net architectures preserve high-resolution spatial information through skip connections between encoder and decoder layers. These skip connections allow low-level anatomical detail to bypass latent compression stages:
+\[
+h_{\mathrm{dec}}
+=
+f(h_{\mathrm{enc}},z),
+\]
+where encoder feature maps are fused directly into decoder representations.
+
+This is especially important for retinal OCT reconstruction because retinal layers are thin and highly structured. The current encoder--decoder architecture frequently oversmooths these boundaries during denoising. A U-Net structure would likely improve:
+\begin{itemize}
+    \item boundary preservation,
+    \item high-frequency retinal detail,
+    \item and global anatomical continuity.
+\end{itemize}
+
+Multi-scale feature propagation is also expected to improve reconstruction of both:
+\begin{itemize}
+    \item local retinal texture,
+    \item and large-scale retinal geometry.
+\end{itemize}
+
+\subsection{Improved Sampling Procedures}
+
+The current implementation uses a standard DDPM sampling procedure with iterative reverse denoising. Although mathematically straightforward, this approach is computationally expensive because it requires:
+\[
+T=1000
+\]
+reverse diffusion steps.
+
+Future work may explore accelerated samplers such as:
+\begin{itemize}
+    \item DDIM sampling,
+    \item higher-order diffusion solvers,
+    \item and consistency-based reconstruction methods.
+\end{itemize}
+
+Reducing the number of sampling steps could significantly improve reconstruction efficiency while preserving image quality.
+
+Sampling stability is also important for medical imaging applications because reconstruction artifacts may arise from accumulated denoising error over long diffusion trajectories.
+
+\subsection{Alternative Noise Schedules}
+
+The current framework uses a linear variance schedule:
+\[
+\beta_t
+\in
+[\beta_{\min},\beta_{\max}].
+\]
+
+Alternative schedules may improve both:
+\begin{itemize}
+    \item training stability,
+    \item and reconstruction fidelity.
+\end{itemize}
+
+Possible extensions include:
+\begin{itemize}
+    \item cosine schedules,
+    \item sigmoid schedules,
+    \item and learned variance schedules.
+\end{itemize}
+
+Different schedules alter the rate at which image information is destroyed during forward diffusion. This directly affects:
+\[
+\text{signal-to-noise ratio}
+\]
+throughout the diffusion trajectory.
+
+An improved schedule may help preserve retinal structure at intermediate diffusion states and produce more stable denoising behavior during reconstruction.
+
+\subsection{Attention Mechanisms and Multi-Scale Features}
+
+The baseline architecture relies primarily on local convolutional processing. However, retinal OCT reconstruction often requires long-range anatomical reasoning because stripe corruption interrupts multiple retinal layers simultaneously.
+
+Attention mechanisms may help the model capture global spatial relationships:
+\[
+\mathrm{Attention}(Q,K,V)
+=
+\mathrm{softmax}
+\left(
+\frac{QK^\top}{\sqrt{d}}
+\right)V.
+\]
+
+Self-attention layers allow the model to relate distant retinal regions directly rather than relying only on local convolutional propagation.
+
+Future architectures may combine:
+\begin{itemize}
+    \item convolutional feature extraction,
+    \item attention-based global context modeling,
+    \item and multi-scale diffusion representations.
+\end{itemize}
+
+Such architectures may improve reconstruction of:
+\begin{itemize}
+    \item long retinal boundaries,
+    \item pathological deformation,
+    \item and global retinal geometry.
+\end{itemize}
+
+\subsection{Expanded Corruption Strategies}
+
+The current framework uses structured horizontal stripe masking as a controlled reconstruction benchmark. Although effective for studying retinal continuity, this corruption pattern remains relatively simple.
+
+Future work may explore:
+\begin{itemize}
+    \item multiple stripe masks,
+    \item irregular geometric corruption,
+    \item localized artifact simulation,
+    \item and pathology-aware masking.
+\end{itemize}
+
+More realistic corruption schemes could better approximate:
+\begin{itemize}
+    \item motion artifacts,
+    \item vascular shadowing,
+    \item signal attenuation,
+    \item and partial acquisition failure.
+\end{itemize}
+
+Adaptive corruption strategies may also help evaluate whether diffusion models can generalize beyond highly structured synthetic masks.
+
+\subsection{Uncertainty Quantification}
+
+One advantage of diffusion models is their probabilistic nature. Because reconstruction proceeds through stochastic sampling, multiple plausible retinal reconstructions may be generated for the same masked image.
+
+Future work may therefore study uncertainty explicitly by sampling:
+\[
+\hat{X}^{(1)},
+\hat{X}^{(2)},
+\ldots,
+\hat{X}^{(K)}
+\sim
+p(X \given Y,M).
+\]
+
+The resulting sample variance could be used to estimate reconstruction uncertainty:
+\[
+\Var(\hat{X}_{ij}).
+\]
+
+Uncertainty estimation is especially important in medical imaging because ambiguous regions may correspond to clinically important pathology. Rather than producing a single deterministic reconstruction, probabilistic models may provide confidence estimates regarding reconstructed anatomy.
+
+Uncertainty maps may also help identify:
+\begin{itemize}
+    \item unreliable reconstructions,
+    \item anatomically ambiguous regions,
+    \item and regions requiring clinician review.
+\end{itemize}
+
+\subsection{Application to Real Retinal Artifacts}
+
+The current framework evaluates reconstruction under synthetic stripe corruption because synthetic masks provide controlled benchmarking and known ground truth.
+
+However, future work may apply diffusion reconstruction directly to real retinal OCT artifacts including:
+\begin{itemize}
+    \item motion distortion,
+    \item acquisition dropout,
+    \item vascular shadowing,
+    \item and signal attenuation.
+\end{itemize}
+
+Real artifact correction introduces additional challenges because:
+\begin{itemize}
+    \item corruption geometry is unknown,
+    \item artifacts may overlap with pathology,
+    \item and ground-truth anatomy is unavailable.
+\end{itemize}
+
+Future pipelines may therefore combine:
+\begin{itemize}
+    \item artifact detection,
+    \item segmentation,
+    \item and conditional reconstruction
+\end{itemize}
+within a unified framework.
+
+This extension would move DiffIndEye closer to clinically relevant OCT restoration.
+
+\subsection{Potential Clinical and Research Applications}
+
+Although the current project is exploratory, diffusion-based retinal reconstruction may eventually support several clinical and research applications.
+
+Possible applications include:
+\begin{itemize}
+    \item OCT artifact correction,
+    \item image quality enhancement,
+    \item probabilistic anatomical reconstruction,
+    \item uncertainty-aware clinical imaging,
+    \item and data augmentation for retinal analysis pipelines.
+\end{itemize}
+
+More broadly, the project contributes to the growing intersection between:
+\begin{itemize}
+    \item medical image analysis,
+    \item probabilistic generative modeling,
+    \item and computational ophthalmology.
+\end{itemize}
+
+The current experiments also highlight an important research lesson: strong generative objectives alone are insufficient without architectures capable of preserving anatomical structure effectively.
+
+Consequently, future work on retinal diffusion reconstruction will likely depend as much on:
+\begin{itemize}
+    \item spatial inductive bias,
+    \item feature hierarchy design,
+    \item and anatomical representation
+\end{itemize}
+as on the diffusion framework itself.
 
 % =========================================================
 \section{Conclusion}
 % =========================================================
 
+\subsection{Summary of Findings}
+
+This project studied retinal OCT inpainting through both classical image processing methods and diffusion-based generative reconstruction. A complete reconstruction framework was developed beginning with:
+\[
+\text{preprocessing}
+\rightarrow
+\text{mask generation}
+\rightarrow
+\text{baseline reconstruction}
+\rightarrow
+\text{diffusion training}
+\rightarrow
+\text{evaluation}.
+\]
+
+Classical methods, including Gaussian smoothing, PDE-based diffusion, and Telea inpainting, established strong deterministic reconstruction baselines. Among these methods, Telea inpainting produced the strongest quantitative and qualitative performance under structured stripe corruption.
+
+A conditional denoising diffusion model was then implemented for retinal OCT reconstruction. The model successfully optimized the DDPM denoising objective and produced stable training behavior across diffusion timesteps. However, despite stable optimization, the initial architecture frequently failed to preserve detailed retinal anatomy and underperformed several classical baselines.
+
+These results demonstrate that successful diffusion training does not necessarily imply successful anatomical reconstruction. Retinal OCT inpainting requires architectures capable of preserving:
+\begin{itemize}
+    \item fine retinal boundaries,
+    \item multi-scale anatomical structure,
+    \item and long-range retinal continuity.
+\end{itemize}
+
+The experiments therefore identify architectural expressiveness, rather than diffusion theory itself, as the primary current bottleneck.
+
+\subsection{Contributions of DiffIndEye}
+
+DiffIndEye contributes a reproducible experimental framework for studying diffusion-based retinal OCT inpainting.
+
+The project developed:
+\begin{itemize}
+    \item a standardized OCT preprocessing pipeline,
+    \item a controllable synthetic corruption framework,
+    \item classical deterministic reconstruction baselines,
+    \item a conditional DDPM implementation,
+    \item modular training and evaluation utilities,
+    \item and reproducible checkpoint-based experimentation workflows.
+\end{itemize}
+
+The framework also supports:
+\[
+\texttt{train}
+\rightarrow
+\texttt{evaluate}
+\rightarrow
+\texttt{modify}
+\rightarrow
+\texttt{retrain}
+\]
+style experimentation, making future architectural development substantially easier.
+
+Perhaps most importantly, the project established a stable infrastructure for future research involving:
+\begin{itemize}
+    \item U-Net diffusion architectures,
+    \item attention mechanisms,
+    \item improved samplers,
+    \item and uncertainty-aware retinal reconstruction.
+\end{itemize}
+
+The current experiments therefore serve not only as reconstruction benchmarks, but also as a foundation for continued methodological development.
+
+\subsection{Broader Implications for Medical Image Inpainting}
+
+The project highlights several broader themes in medical image analysis and generative modeling.
+
+First, medical image reconstruction differs fundamentally from ordinary natural-image synthesis because anatomical structure imposes strong geometric and clinical constraints. Reconstruction quality must therefore be evaluated not only numerically, but also anatomically.
+
+Second, relatively simple deterministic methods may remain highly competitive in structured medical imaging settings. The strong performance of Telea inpainting demonstrates that local anatomical continuity alone can provide substantial reconstruction power for retinal OCT images.
+
+Third, diffusion models remain promising for medical imaging because they provide:
+\begin{itemize}
+    \item probabilistic reconstruction,
+    \item iterative denoising,
+    \item and uncertainty-aware image generation.
+\end{itemize}
+
+However, these advantages depend critically on:
+\begin{itemize}
+    \item architecture design,
+    \item feature representation,
+    \item and spatial inductive bias.
+\end{itemize}
+
+Finally, the project demonstrates the importance of reproducible experimental infrastructure in modern machine learning research. As diffusion architectures become increasingly complex, modular and repeatable pipelines become essential for meaningful scientific progress.
+
+Although the current diffusion model remains preliminary, DiffIndEye establishes a foundation for future exploration at the intersection of:
+\[
+\text{medical image analysis},
+\quad
+\text{computer vision},
+\quad
+\text{and probabilistic generative modeling}.
+\]
 
 
 % =========================================================
