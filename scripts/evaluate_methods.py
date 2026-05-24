@@ -6,7 +6,7 @@ import torch
 
 from diffindeye.config import TEST_DIR, METRICS_DIR
 from diffindeye.data import get_image_paths
-from diffindeye.diff_models import ConditionalTimeDDPM
+from diffindeye.diff_models import ConditionalTimeDDPM, ConditionalUNetDDPM
 from diffindeye.diff_schedules import make_linear_schedule
 from diffindeye.evaluation import (
     evaluate_all_methods,
@@ -44,13 +44,27 @@ def parse_args():
 
 
 def load_model(checkpoint_path, device):
-    model = ConditionalTimeDDPM().to(device)
-
     checkpoint = torch.load(
         checkpoint_path,
         map_location=device,
         weights_only=False,
     )
+
+    model_name = checkpoint.get("model", "simple")
+    time_emb_dim = checkpoint.get("time_emb_dim", 32)
+
+    if model_name == "simple":
+        model = ConditionalTimeDDPM(
+            time_emb_dim=time_emb_dim
+        ).to(device)
+
+    elif model_name == "unet":
+        model = ConditionalUNetDDPM(
+            time_emb_dim=time_emb_dim
+        ).to(device)
+
+    else:
+        raise ValueError(f"Unknown model type in checkpoint: {model_name}")
 
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()

@@ -19,7 +19,7 @@ from diffindeye.config import (
     STRIPE_HEIGHT,
 )
 from diffindeye.data import get_image_paths, make_dataloader
-from diffindeye.diff_models import ConditionalTimeDDPM
+from diffindeye.diff_models import ConditionalTimeDDPM, ConditionalUNetDDPM
 from diffindeye.diff_schedules import make_linear_schedule
 from diffindeye.diff_train import (
     train_conditional_ddpm,
@@ -32,6 +32,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--run-name", type=str, default="conditional_ddpm")
+    parser.add_argument("--model", type=str, choices=["simple", "unet"], default="simple")
+
     parser.add_argument("--n-steps", type=int, default=1000)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -58,6 +60,20 @@ def set_seed(seed):
     torch.manual_seed(seed)
 
 
+def build_model(model_name, time_emb_dim, device):
+    if model_name == "simple":
+        return ConditionalTimeDDPM(
+            time_emb_dim=time_emb_dim
+        ).to(device)
+
+    if model_name == "unet":
+        return ConditionalUNetDDPM(
+            time_emb_dim=time_emb_dim
+        ).to(device)
+
+    raise ValueError(f"Unknown model name: {model_name}")
+
+
 def main():
     args = parse_args()
 
@@ -66,7 +82,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_id = f"{args.run_name}_{timestamp}"
+    run_id = f"{args.run_name}_{args.model}_{timestamp}"
 
     run_dir = CHECKPOINT_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -82,6 +98,7 @@ def main():
 
     print("Configuration")
     print("-" * 70)
+    print(f"model:            {args.model}")
     print(f"n_steps:          {args.n_steps}")
     print(f"batch_size:       {args.batch_size}")
     print(f"learning_rate:    {args.lr}")
@@ -137,9 +154,11 @@ def main():
     print(f"alpha_bar[-1]:    {alpha_bars[-1].item():.6f}")
     print()
 
-    model = ConditionalTimeDDPM(
-        time_emb_dim=args.time_emb_dim
-    ).to(device)
+    model = build_model(
+        model_name=args.model,
+        time_emb_dim=args.time_emb_dim,
+        device=device,
+    )
 
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -179,6 +198,7 @@ def main():
     config = {
         "run_id": run_id,
         "timestamp": timestamp,
+        "model": args.model,
         "device": str(device),
         "torch_version": torch.__version__,
         "n_steps": args.n_steps,
@@ -229,7 +249,7 @@ def main():
     )
 
     final_step = start_step + args.n_steps
-    final_checkpoint_path = run_dir / f"{args.run_name}_final_step_{final_step}.pt"
+    final_checkpoint_path = run_dir / f"{args.run_name}_{args.model}_final_step_{final_step}.pt"
 
     save_training_checkpoint(
         checkpoint_path=final_checkpoint_path,
@@ -258,7 +278,7 @@ def main():
     print(
         "PYTHONPATH=src python scripts/evaluate_methods.py "
         "--mode baseline-vs-diffusion "
-        f"--checkpoints {final_checkpoint_path} "
+        f"--checkpoints \"{final_checkpoint_path}\" "
         "--n-samples 25 "
         "--sample-steps 100 "
         f"--run-name {run_id}"
